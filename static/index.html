@@ -1,0 +1,1339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI E-Commerce Assistant - Universal Product Search</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+
+        .auth-section {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: #666;
+            transition: all 0.3s ease;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .tab:hover {
+            color: #667eea;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #555;
+        }
+
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #dc3545 0%, #bd2130 100%);
+        }
+
+        .search-section, .upload-section, .history-section {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            display: none;
+        }
+
+        .search-section.active, .upload-section.active, .history-section.active {
+            display: block;
+        }
+
+        .section-tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .section-tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 1rem;
+            font-weight: 500;
+            color: #666;
+            transition: all 0.3s ease;
+        }
+
+        .section-tab.active {
+            color: #667eea;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .search-modes {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .mode-btn {
+            padding: 8px 16px;
+            border: 2px solid #667eea;
+            background: white;
+            color: #667eea;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .mode-btn.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 1rem;
+            margin-bottom: 15px;
+        }
+
+        .file-upload {
+            border: 2px dashed #667eea;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            margin-bottom: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .file-upload:hover {
+            background: #f8f9ff;
+        }
+
+        .file-upload input[type="file"] {
+            display: none;
+        }
+
+        .quick-filters {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            padding: 6px 12px;
+            border: 1px solid #ddd;
+            background: #f8f9fa;
+            border-radius: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .filter-btn:hover {
+            background: #e9ecef;
+        }
+
+        .filter-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .results-section {
+            margin-top: 30px;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .results-count {
+            font-weight: 500;
+            color: #666;
+        }
+
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .product-card {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .product-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+        }
+
+        .product-image {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+        }
+
+        .product-info {
+            padding: 15px;
+        }
+
+        .product-name {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #333;
+        }
+
+        .product-price {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 8px;
+        }
+
+        .product-category {
+            font-size: 0.9rem;
+            color: #666;
+            background: #f8f9fa;
+            padding: 4px 8px;
+            border-radius: 12px;
+            display: inline-block;
+        }
+
+        .product-description {
+            font-size: 0.9rem;
+            color: #555;
+            margin-top: 8px;
+            line-height: 1.4;
+        }
+
+        .similarity-score {
+            font-size: 0.8rem;
+            color: #28a745;
+            font-weight: 500;
+            margin-top: 5px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #f5c6cb;
+        }
+
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #c3e6cb;
+        }
+
+        .user-info {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            display: none;
+        }
+
+        .user-info.active {
+            display: block;
+        }
+
+        .user-email {
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .logout-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            cursor: pointer;
+        }
+
+        .logout-btn:hover {
+            background: #c82333;
+        }
+
+        .login-required {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-size: 1.1rem;
+        }
+
+        .login-required h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .upload-form {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .form-row .form-group {
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        .json-upload {
+            border: 2px dashed #28a745;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #f8fff9;
+        }
+
+        .json-upload:hover {
+            background: #f0fff0;
+        }
+
+        .json-upload input[type="file"] {
+            display: none;
+        }
+
+        .history-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .history-item .timestamp {
+            font-size: 0.8rem;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .history-item .query {
+            font-weight: 500;
+            margin-bottom: 5px;
+        }
+
+        .history-item .response {
+            color: #555;
+            font-size: 0.9rem;
+        }
+
+        .status-message {
+            padding: 10px 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-weight: 500;
+        }
+
+        .status-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .category-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 10px;
+        }
+
+        .category-tag {
+            background: #e9ecef;
+            color: #495057;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .products-grid {
+                grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+                gap: 15px;
+            }
+
+            .search-modes, .quick-filters {
+                justify-content: center;
+            }
+
+            .form-row {
+                flex-direction: column;
+                gap: 0;
+            }
+
+            .form-row .form-group {
+                margin-bottom: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="user-info" id="userInfo">
+        <div class="user-email" id="userEmail"></div>
+        <button class="logout-btn" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>🛍️ AI E-Commerce Assistant</h1>
+            <p>Universal Product Search & Management</p>
+        </div>
+
+        <div class="auth-section" id="authSection">
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('login')">Login</button>
+                <button class="tab" onclick="switchTab('signup')">Sign Up</button>
+            </div>
+            
+            <div id="loginForm" class="auth-form">
+                <div class="form-group">
+                    <label for="loginEmail">Username or Email</label>
+                    <input type="text" id="loginEmail" placeholder="Enter your username or email">
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">Password</label>
+                    <input type="password" id="loginPassword" placeholder="Enter your password">
+                </div>
+                <button class="btn" onclick="login()">Login</button>
+            </div>
+            
+            <div id="signupForm" class="auth-form" style="display: none;">
+                <div class="form-group">
+                    <label for="signupEmail">Email</label>
+                    <input type="email" id="signupEmail" placeholder="Enter your email">
+                </div>
+                <div class="form-group">
+                    <label for="signupPassword">Password</label>
+                    <input type="password" id="signupPassword" placeholder="Enter your password">
+                </div>
+                <div class="form-group">
+                    <label for="confirmPassword">Confirm Password</label>
+                    <input type="password" id="confirmPassword" placeholder="Confirm your password">
+                </div>
+                <button class="btn" onclick="signup()">Sign Up</button>
+            </div>
+        </div>
+
+        <div class="section-tabs" id="mainTabs" style="display: none;">
+            <button class="section-tab active" onclick="switchMainTab('search')">🔍 Search Products</button>
+            <button class="section-tab" onclick="switchMainTab('upload')">📤 Upload Products</button>
+            <button class="section-tab" onclick="switchMainTab('history')">📋 Chat History</button>
+        </div>
+
+        <div class="search-section active" id="searchSection">
+            <div class="login-required" id="loginRequired">
+                <h3>🔒 Login Required</h3>
+                <p>Please log in to access the search functionality.</p>
+            </div>
+            
+            <div id="searchContent" style="display: none;">
+                <div class="search-modes">
+                    <button class="mode-btn active" onclick="switchSearchMode('text')">Text Search</button>
+                    <button class="mode-btn" onclick="switchSearchMode('image')">Image Search</button>
+                    <button class="mode-btn" onclick="switchSearchMode('combined')">Combined Search</button>
+                    <button class="mode-btn" onclick="switchSearchMode('similarity')">Product Search</button>
+                </div>
+
+                <div id="textSearch" class="search-mode">
+                    <input type="text" class="search-input" id="textQuery" placeholder="Search for any product... (e.g., 'gold ring', 'smartphone', 'laptop', 'dress')">
+                </div>
+
+                <div id="imageSearch" class="search-mode" style="display: none;">
+                    <div class="file-upload" onclick="document.getElementById('imageInput').click()">
+                        <div id="uploadText">
+                            <p>📸 Click to upload an image</p>
+                            <p style="font-size: 0.9rem; color: #666; margin-top: 5px;">or drag and drop here</p>
+                        </div>
+                        <img id="uploadedImage" style="max-width: 200px; max-height: 200px; display: none; margin-top: 10px;">
+                    </div>
+                    <input type="file" id="imageInput" accept="image/*" onchange="handleImageUpload(event)">
+                </div>
+
+                <div id="combinedSearch" class="search-mode" style="display: none;">
+                    <input type="text" class="search-input" id="combinedTextQuery" placeholder="Describe what you're looking for...">
+                    <div class="file-upload" onclick="document.getElementById('combinedImageInput').click()">
+                        <div id="combinedUploadText">
+                            <p>📸 Click to upload a reference image (optional)</p>
+                            <p style="font-size: 0.9rem; color: #666; margin-top: 5px;">or drag and drop here</p>
+                        </div>
+                        <img id="combinedUploadedImage" style="max-width: 200px; max-height: 200px; display: none; margin-top: 10px;">
+                    </div>
+                    <input type="file" id="combinedImageInput" accept="image/*" onchange="handleCombinedImageUpload(event)">
+                </div>
+
+                <div id="similaritySearch" class="search-mode" style="display: none;">
+                    <input type="text" class="search-input" id="similarityQuery" placeholder="Describe the product similarity...">
+                    <div class="file-upload" onclick="document.getElementById('similarityImageInput').click()">
+                        <div id="similarityUploadText">
+                            <p>📸 Upload reference image (optional)</p>
+                            <p style="font-size: 0.9rem; color: #666; margin-top: 5px;">for visual similarity search</p>
+                        </div>
+                        <img id="similarityUploadedImage" style="max-width: 200px; max-height: 200px; display: none; margin-top: 10px;">
+                    </div>
+                    <input type="file" id="similarityImageInput" accept="image/*" onchange="handleSimilarityImageUpload(event)">
+                    <div class="form-group">
+                        <label for="similarityLimit">Max Results:</label>
+                        <select id="similarityLimit">
+                            <option value="5">5</option>
+                            <option value="10" selected>10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="quick-filters">
+                    <button class="filter-btn" onclick="addFilter('electronics')">💻 Electronics</button>
+                    <button class="filter-btn" onclick="addFilter('clothing')">👕 Clothing</button>
+                    <button class="filter-btn" onclick="addFilter('home')">🏠 Home</button>
+                    <button class="filter-btn" onclick="addFilter('sports')">⚽ Sports</button>
+                    <button class="filter-btn" onclick="addFilter('books')">📚 Books</button>
+                    <button class="filter-btn" onclick="addFilter('toys')">🧸 Toys</button>
+                    <button class="filter-btn" onclick="addFilter('jewelry')">💎 Jewelry</button>
+                    <button class="filter-btn" onclick="addFilter('furniture')">🪑 Furniture</button>
+                    <button class="filter-btn" onclick="addFilter('food')">🍔 Food</button>
+                    <button class="filter-btn" onclick="addFilter('beauty')">💄 Beauty</button>
+                    <button class="filter-btn" onclick="clearFilters()">🗑️ Clear All</button>
+                </div>
+
+                <button class="btn" id="searchBtn" onclick="window.jewelryUI.performSearch()">Search</button>
+            </div>
+        </div>
+
+        <div class="upload-section" id="uploadSection">
+            <div class="login-required" id="uploadLoginRequired">
+                <h3>🔒 Login Required</h3>
+                <p>Please log in to access the upload functionality.</p>
+            </div>
+            
+            <div id="uploadContent" style="display: none;">
+                <div class="section-tabs">
+                    <button class="section-tab active" onclick="switchUploadTab('json')">📄 Upload JSON</button>
+                    <button class="section-tab" onclick="switchUploadTab('manual')">✋ Manual Entry</button>
+                </div>
+
+                <div id="jsonUpload" class="upload-mode">
+                    <div class="json-upload" onclick="document.getElementById('jsonFileInput').click()">
+                        <div id="jsonUploadText">
+                            <p>📁 Click to upload JSON file</p>
+                            <p style="font-size: 0.9rem; color: #666; margin-top: 5px;">Contains product data array</p>
+                        </div>
+                    </div>
+                    <input type="file" id="jsonFileInput" accept=".json" onchange="handleJsonUpload(event)">
+                    <button class="btn btn-success" onclick="uploadJsonProducts()">Upload Products</button>
+                </div>
+
+                <div id="manualUpload" class="upload-mode" style="display: none;">
+                    <div class="upload-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="productName">Product Name *</label>
+                                <input type="text" id="productName" placeholder="Enter product name">
+                            </div>
+                            <div class="form-group">
+                                <label for="productPrice">Price *</label>
+                                <input type="text" id="productPrice" placeholder="Enter price">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="productDescription">Description *</label>
+                            <textarea id="productDescription" placeholder="Enter product description"></textarea>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="productCategory">Category *</label>
+                                <input type="text" id="productCategory" placeholder="e.g., electronics, clothing">
+                            </div>
+                            <div class="form-group">
+                                <label for="productImageUrl">Image URL</label>
+                                <input type="url" id="productImageUrl" placeholder="Enter image URL (optional)">
+                            </div>
+                        </div>
+                        <button class="btn btn-success" onclick="uploadManualProduct()">Add Product</button>
+                        <button class="btn btn-secondary" onclick="clearManualForm()">Clear Form</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="history-section" id="historySection">
+            <div class="login-required" id="historyLoginRequired">
+                <h3>🔒 Login Required</h3>
+                <p>Please log in to view chat history.</p>
+            </div>
+            
+            <div id="historyContent" style="display: none;">
+                <div class="form-group">
+                    <label for="sessionSelect">Select Session:</label>
+                    <select id="sessionSelect" onchange="loadSelectedHistory()">
+                        <option value="">Loading sessions...</option>
+                    </select>
+                </div>
+                <div id="chatHistory"></div>
+            </div>
+        </div>
+
+        <div class="results-section" id="resultsSection" style="display: none;">
+            <div class="results-header">
+                <h2>Search Results</h2>
+                <div class="results-count" id="resultsCount"></div>
+            </div>
+            <div id="searchResults"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        // Global variables
+        let currentSearchMode = 'text';
+        let currentMainTab = 'search';
+        let currentUploadTab = 'json';
+        let uploadedImage = null;
+        let uploadedJsonFile = null;
+        let currentFilters = [];
+        let api = null;
+
+        // Initialize the application
+        function initializeApp() {
+            // Use the global jewelryAPI object created by app.js
+            api = window.jewelryAPI;
+            
+            // Debug logging
+            console.log('API initialization:', {
+                jewelryAPI: window.jewelryAPI,
+                api: api,
+                JewelryAPI: typeof JewelryAPI
+            });
+            
+            if (!api) {
+                console.error('API not available! window.jewelryAPI is null');
+                showMessage('Application initialization failed. Please refresh the page.', 'error');
+                return;
+            }
+            
+            checkAuthStatus();
+            setupEventListeners();
+        }
+
+        // Wait for the API to be available
+        if (window.jewelryAPI) {
+            // API is already available
+            initializeApp();
+        } else {
+            // Wait for DOM to be loaded, then check for API
+            document.addEventListener('DOMContentLoaded', function() {
+                // Give app.js a moment to initialize
+                setTimeout(() => {
+                    if (window.jewelryAPI) {
+                        initializeApp();
+                    } else {
+                        console.error('API still not available after DOMContentLoaded');
+                        showMessage('Application initialization failed. Please refresh the page.', 'error');
+                    }
+                }, 100);
+            });
+        }
+
+        // Check authentication status
+        async function checkAuthStatus() {
+            const token = localStorage.getItem('authToken');
+            if (token) {
+                try {
+                    const user = await api.getCurrentUser();
+                    if (user) {
+                        showMainInterface();
+                    } else {
+                        localStorage.removeItem('authToken');
+                    }
+                } catch (error) {
+                    console.error('Auth check failed:', error);
+                    localStorage.removeItem('authToken');
+                }
+            }
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            // Drag and drop for image uploads
+            setupDragAndDrop('imageInput');
+            setupDragAndDrop('combinedImageInput');
+            setupDragAndDrop('similarityImageInput');
+
+            // Enter key for search inputs
+            document.getElementById('textQuery').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') window.jewelryUI.performSearch();
+            });
+            document.getElementById('combinedTextQuery').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') window.jewelryUI.performSearch();
+            });
+            document.getElementById('similarityQuery').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') window.jewelryUI.performSearch();
+            });
+        }
+
+        // Setup drag and drop
+        function setupDragAndDrop(inputId) {
+            const fileUpload = document.querySelector(`#${inputId}`).parentElement.querySelector('.file-upload');
+            if (fileUpload) {
+                fileUpload.addEventListener('dragover', function(e) {
+                    e.preventDefault();
+                    this.style.background = '#f8f9ff';
+                });
+                fileUpload.addEventListener('dragleave', function(e) {
+                    e.preventDefault();
+                    this.style.background = '';
+                });
+                fileUpload.addEventListener('drop', function(e) {
+                    e.preventDefault();
+                    this.style.background = '';
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        document.getElementById(inputId).files = files;
+                        handleImageUpload({ target: { files: files } });
+                    }
+                });
+            }
+        }
+
+        // Authentication functions
+        async function login() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            if (!email || !password) {
+                showMessage('Please fill in all fields', 'error');
+                return;
+            }
+
+            try {
+                const result = await api.login(email, password);
+                if (result.success) {
+                    showMainInterface();
+                    showMessage('Login successful!', 'success');
+                } else {
+                    showMessage(result.message || 'Login failed', 'error');
+                }
+            } catch (error) {
+                showMessage('Login failed: ' + error.message, 'error');
+            }
+        }
+
+        async function signup() {
+            const email = document.getElementById('signupEmail').value;
+            const password = document.getElementById('signupPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            
+            if (!email || !password || !confirmPassword) {
+                showMessage('Please fill in all fields', 'error');
+                return;
+            }
+
+            if (password !== confirmPassword) {
+                showMessage('Passwords do not match', 'error');
+                return;
+            }
+
+            // Debug logging
+            console.log('Signup attempt:', {
+                api: api,
+                email: email,
+                hasApiRegister: typeof api?.register
+            });
+
+            if (!api) {
+                showMessage('Application not initialized. Please refresh the page.', 'error');
+                return;
+            }
+
+            if (typeof api.register !== 'function') {
+                showMessage('API registration method not available. Please refresh the page.', 'error');
+                return;
+            }
+
+            try {
+                const result = await api.register({
+                    username: email,
+                    email: email,
+                    password: password
+                });
+                if (result.success) {
+                    showMessage('Signup successful! Please log in.', 'success');
+                    switchTab('login');
+                } else {
+                    showMessage(result.error || 'Signup failed', 'error');
+                }
+            } catch (error) {
+                showMessage('Signup failed: ' + error.message, 'error');
+            }
+        }
+
+        async function logout() {
+            try {
+                await api.logout();
+                localStorage.removeItem('authToken');
+                localStorage.removeItem('userEmail');
+                location.reload();
+            } catch (error) {
+                console.error('Logout error:', error);
+                localStorage.removeItem('authToken');
+                localStorage.removeItem('userEmail');
+                location.reload();
+            }
+        }
+
+        // UI switching functions
+        function switchTab(tab) {
+            const tabs = document.querySelectorAll('.tab');
+            tabs.forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+
+            document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
+            document.getElementById('signupForm').style.display = tab === 'signup' ? 'block' : 'none';
+        }
+
+        function switchMainTab(tab) {
+            currentMainTab = tab;
+            const tabs = document.querySelectorAll('.section-tab');
+            tabs.forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+
+            document.querySelectorAll('.search-section, .upload-section, .history-section').forEach(section => {
+                section.classList.remove('active');
+            });
+
+            if (tab === 'search') {
+                document.getElementById('searchSection').classList.add('active');
+            } else if (tab === 'upload') {
+                document.getElementById('uploadSection').classList.add('active');
+            } else if (tab === 'history') {
+                document.getElementById('historySection').classList.add('active');
+                loadChatHistory();
+            }
+        }
+
+        function switchUploadTab(tab) {
+            currentUploadTab = tab;
+            const tabs = document.querySelectorAll('.upload-section .section-tab');
+            tabs.forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+
+            document.getElementById('jsonUpload').style.display = tab === 'json' ? 'block' : 'none';
+            document.getElementById('manualUpload').style.display = tab === 'manual' ? 'block' : 'none';
+        }
+
+        function switchSearchMode(mode) {
+            currentSearchMode = mode;
+            const buttons = document.querySelectorAll('.mode-btn');
+            buttons.forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+
+            document.querySelectorAll('.search-mode').forEach(mode => mode.style.display = 'none');
+            document.getElementById(mode + 'Search').style.display = 'block';
+        }
+
+        function showMainInterface() {
+            document.getElementById('authSection').style.display = 'none';
+            document.getElementById('mainTabs').style.display = 'flex';
+            document.getElementById('searchSection').classList.add('active');
+            document.getElementById('userInfo').classList.add('active');
+            document.getElementById('userEmail').textContent = localStorage.getItem('userEmail') || 'User';
+            document.getElementById('searchContent').style.display = 'block';
+            document.getElementById('uploadContent').style.display = 'block';
+            document.getElementById('historyContent').style.display = 'block';
+        }
+
+        // Image handling functions
+        function handleImageUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                uploadedImage = file;
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = document.getElementById('uploadedImage');
+                    img.src = e.target.result;
+                    img.style.display = 'block';
+                    document.getElementById('uploadText').style.display = 'none';
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function handleCombinedImageUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = document.getElementById('combinedUploadedImage');
+                    img.src = e.target.result;
+                    img.style.display = 'block';
+                    document.getElementById('combinedUploadText').style.display = 'none';
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function handleSimilarityImageUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = document.getElementById('similarityUploadedImage');
+                    img.src = e.target.result;
+                    img.style.display = 'block';
+                    document.getElementById('similarityUploadText').style.display = 'none';
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        // Filter functions
+        function addFilter(filter) {
+            if (!currentFilters.includes(filter)) {
+                currentFilters.push(filter);
+                event.target.classList.add('active');
+            } else {
+                currentFilters = currentFilters.filter(f => f !== filter);
+                event.target.classList.remove('active');
+            }
+        }
+
+        function clearFilters() {
+            currentFilters = [];
+            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+        }
+
+        // Search functionality is now handled by window.jewelryUI.performSearch() in app.js
+
+        function displayResults(response, resultsDiv, resultsCount) {
+            console.log('API Response:', response); // Log the full response
+            
+            // Check for products in different possible fields
+            const products = response.products || response.results || [];
+            console.log('Extracted products:', products); // Log the extracted products
+            
+            if (!response || !products || products.length === 0) {
+                console.log('No products found in response');
+                resultsDiv.innerHTML = '<div class="error">No products found matching your search criteria. Please try a different search term or check if any products exist in the system.</div>';
+                resultsCount.textContent = '';
+                return;
+            }
+
+            resultsCount.textContent = `Found ${products.length} products`;
+
+            const productsGrid = document.createElement('div');
+            productsGrid.className = 'products-grid';
+
+            products.forEach(product => {
+                const productCard = createProductCard(product);
+                productsGrid.appendChild(productCard);
+            });
+
+            resultsDiv.innerHTML = '';
+            resultsDiv.appendChild(productsGrid);
+        }
+
+        function createProductCard(product) {
+            const card = document.createElement('div');
+            card.className = 'product-card';
+
+            const imageUrl = product.image_url || 'https://via.placeholder.com/300x200?text=No+Image';
+            const price = product.price ? `$${product.price}` : 'Price not available';
+            const category = product.category || 'Uncategorized';
+            const description = product.description || 'No description available';
+            const similarityScore = product.similarity_score ? 
+                `<div class="similarity-score">Similarity: ${(product.similarity_score * 100).toFixed(1)}%</div>` : '';
+
+            card.innerHTML = `
+                <img src="${imageUrl}" alt="${product.name}" class="product-image" onerror="this.src='https://via.placeholder.com/300x200?text=No+Image'">
+                <div class="product-info">
+                    <div class="product-name">${product.name}</div>
+                    <div class="product-price">${price}</div>
+                    <div class="product-category">${category}</div>
+                    <div class="product-description">${description}</div>
+                    ${similarityScore}
+                </div>
+            `;
+
+            return card;
+        }
+
+        // Upload functions
+        function handleJsonUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                uploadedJsonFile = file;
+                document.getElementById('jsonUploadText').innerHTML = `
+                    <p>✅ Selected: ${file.name}</p>
+                    <p style="font-size: 0.9rem; color: #666; margin-top: 5px;">Click to change file</p>
+                `;
+            }
+        }
+
+        async function uploadJsonProducts() {
+            if (!uploadedJsonFile) {
+                showMessage('Please select a JSON file first', 'error');
+                return;
+            }
+
+            try {
+                const text = await uploadedJsonFile.text();
+                const products = JSON.parse(text);
+
+                if (!Array.isArray(products)) {
+                    throw new Error('JSON must contain an array of products');
+                }
+
+                const result = await api.uploadProducts(products);
+                if (result.success) {
+                    showMessage(`Successfully uploaded ${products.length} products!`, 'success');
+                    uploadedJsonFile = null;
+                    document.getElementById('jsonUploadText').innerHTML = `
+                        <p>📁 Click to upload JSON file</p>
+                        <p style="font-size: 0.9rem; color: #666; margin-top: 5px;">Contains product data array</p>
+                    `;
+                } else {
+                    showMessage(result.message || 'Upload failed', 'error');
+                }
+            } catch (error) {
+                showMessage('Upload failed: ' + error.message, 'error');
+            }
+        }
+
+        async function uploadManualProduct() {
+            const name = document.getElementById('productName').value.trim();
+            const price = document.getElementById('productPrice').value.trim();
+            const description = document.getElementById('productDescription').value.trim();
+            const category = document.getElementById('productCategory').value.trim();
+            const imageUrl = document.getElementById('productImageUrl').value.trim();
+
+            if (!name || !price || !description || !category) {
+                showMessage('Please fill in all required fields', 'error');
+                return;
+            }
+
+            const product = {
+                name: name,
+                price: price,
+                description: description,
+                category: category,
+                image_url: imageUrl || null
+            };
+
+            try {
+                const result = await api.uploadProducts([product]);
+                if (result.success) {
+                    showMessage('Product uploaded successfully!', 'success');
+                    clearManualForm();
+                } else {
+                    showMessage(result.message || 'Upload failed', 'error');
+                }
+            } catch (error) {
+                showMessage('Upload failed: ' + error.message, 'error');
+            }
+        }
+
+        function clearManualForm() {
+            document.getElementById('productName').value = '';
+            document.getElementById('productPrice').value = '';
+            document.getElementById('productDescription').value = '';
+            document.getElementById('productCategory').value = '';
+            document.getElementById('productImageUrl').value = '';
+        }
+
+        // Chat history functions
+        async function loadChatHistory() {
+            const sessionSelect = document.getElementById('sessionSelect');
+            const chatHistory = document.getElementById('chatHistory');
+
+            try {
+                // Get current user to access sessions
+                const user = await api.getCurrentUser();
+                if (!user || !user.session_id) {
+                    chatHistory.innerHTML = '<div class="error">No active session found.</div>';
+                    return;
+                }
+
+                // Load history for current session
+                const history = await api.getChatHistory(user.session_id);
+                displayChatHistory(history, chatHistory);
+
+                // Update session select (simplified for demo)
+                sessionSelect.innerHTML = `
+                    <option value="${user.session_id}">Current Session (${new Date().toLocaleDateString()})</option>
+                `;
+            } catch (error) {
+                console.error('Load history error:', error);
+                chatHistory.innerHTML = `<div class="error">Failed to load chat history: ${error.message}</div>`;
+            }
+        }
+
+        function displayChatHistory(history, container) {
+            if (!history || !history.messages || history.messages.length === 0) {
+                container.innerHTML = '<div class="error">No chat history available.</div>';
+                return;
+            }
+
+            container.innerHTML = '';
+            history.messages.forEach(message => {
+                const historyItem = document.createElement('div');
+                historyItem.className = 'history-item';
+                
+                const timestamp = new Date(message.timestamp).toLocaleString();
+                historyItem.innerHTML = `
+                    <div class="timestamp">${timestamp}</div>
+                    <div class="query">Query: ${message.query || 'Image search'}</div>
+                    <div class="response">Response: ${message.response}</div>
+                    ${message.products && message.products.length > 0 ? 
+                        `<div class="category-tags">
+                            ${message.products.slice(0, 3).map(p => 
+                                `<span class="category-tag">${p.name}</span>`
+                            ).join('')}
+                        </div>` : ''
+                    }
+                `;
+                container.appendChild(historyItem);
+            });
+        }
+
+        async function loadSelectedHistory() {
+            // This function would load history for a specific session
+            // For now, just reload current session history
+            loadChatHistory();
+        }
+
+        // Utility functions
+        function showMessage(message, type) {
+            // Create a temporary status message
+            const statusDiv = document.createElement('div');
+            statusDiv.className = `status-message status-${type}`;
+            statusDiv.textContent = message;
+
+            // Insert at the top of the current active section
+            const activeSection = document.querySelector('.search-section.active, .upload-section.active, .history-section.active');
+            if (activeSection) {
+                activeSection.insertBefore(statusDiv, activeSection.firstChild);
+                setTimeout(() => {
+                    statusDiv.remove();
+                }, 5000);
+            }
+        }
+
+        // Enhanced JewelryAPI class (assuming it's in app.js)
+        // Adding missing methods if they don't exist
+        if (typeof JewelryAPI !== 'undefined') {
+            // Add getCurrentUser method if not exists
+            if (!JewelryAPI.prototype.getCurrentUser) {
+                JewelryAPI.prototype.getCurrentUser = async function() {
+                    const token = localStorage.getItem('authToken');
+                    if (!token) return null;
+
+                    try {
+                        const response = await fetch('/protected-route', {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            return {
+                                username: data.message?.replace('Hello ', '').replace(', this is a protected route', ''),
+                                session_id: localStorage.getItem('sessionId')
+                            };
+                        }
+                        return null;
+                    } catch (error) {
+                        console.error('Get current user error:', error);
+                        return null;
+                    }
+                };
+            }
+
+            // Add getChatHistory method if not exists
+            if (!JewelryAPI.prototype.getChatHistory) {
+                JewelryAPI.prototype.getChatHistory = async function(sessionId) {
+                    const token = localStorage.getItem('authToken');
+                    if (!token || !sessionId) return null;
+
+                    try {
+                        const response = await fetch(`/chat/history/${sessionId}`, {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+
+                        if (response.ok) {
+                            return await response.json();
+                        }
+                        return null;
+                    } catch (error) {
+                        console.error('Get chat history error:', error);
+                        return null;
+                    }
+                };
+            }
+        }
+    </script>
+    
+    <!-- Live search test script -->
+
+    
+    </body>
+</html>
