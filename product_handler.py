@@ -264,11 +264,34 @@ class ProductHandler:
             return similarity_score * 100
 
     def _detect_category_from_query(self, query: str) -> str:
-        """Enhanced category detection with comprehensive keyword matching"""
+        """
+        Enhanced category detection with comprehensive keyword matching
+        
+        Args:
+            query: The search query to analyze
+            
+        Returns:
+            str: Detected category name or None if no clear match
+        """
         if not query:
+            logger.debug("No query provided for category detection")
             return None
             
         query_lower = query.lower().strip()
+        logger.debug(f"Detecting category from query: {query_lower}")
+        
+        # Special handling for jewelry-related queries
+        jewelry_terms = [
+            'jewelry', 'jewellery', 'necklace', 'ring', 'earring', 'bracelet', 
+            'pendant', 'chain', 'bangle', 'anklet', 'brooch', 'gemstone',
+            'diamond', 'gold', 'silver', 'platinum', 'pearl', 'crystal'
+        ]
+        
+        # Check for jewelry terms first with exact matching
+        for term in jewelry_terms:
+            if f' {term} ' in f' {query_lower} ':
+                logger.debug(f"Detected jewelry term in query: {term}")
+                return 'jewelry'
         
         # Score each category based on keyword matches
         category_scores = {}
@@ -278,33 +301,296 @@ class ProductHandler:
             
             # Check primary keywords (higher weight)
             for keyword in keywords["primary"]:
-                if keyword in query_lower:
+                if f' {keyword} ' in f' {query_lower} ':
                     score += 3
+                    logger.debug(f"Matched primary keyword '{keyword}' for category '{category}'")
                     
             # Check type keywords (medium weight)
             if "types" in keywords:
                 for keyword in keywords["types"]:
-                    if keyword in query_lower:
+                    if f' {keyword} ' in f' {query_lower} ':
                         score += 2
+                        logger.debug(f"Matched type keyword '{keyword}' for category '{category}'")
                         
             # Check other keywords (lower weight)
             for key in ["attributes", "brands", "materials"]:
                 if key in keywords:
                     for keyword in keywords[key]:
-                        if keyword in query_lower:
+                        if f' {keyword} ' in f' {query_lower} ':
                             score += 1
+                            logger.debug(f"Matched {key} keyword '{keyword}' for category '{category}'")
             
             if score > 0:
                 category_scores[category] = score
         
-        # Return the category with highest score, or None if no matches
+        # Log the category scores for debugging
         if category_scores:
-            best_category = max(category_scores, key=category_scores.get)
-            if category_scores[best_category] >= 2:  # Minimum threshold
-                logger.info(f"Auto-detected {best_category} category from query: '{query}' (score: {category_scores[best_category]})")
-                return best_category
+            logger.debug(f"Category scores: {category_scores}")
+        else:
+            logger.debug("No category keywords matched in query")
         
-        return None
+        # Return the category with highest score, or None if no matches
+        if not category_scores:
+            return None
+            
+        detected_category = max(category_scores.items(), key=lambda x: x[1])[0]
+        logger.debug(f"Detected category: {detected_category}")
+        return detected_category
+
+    async def search_jewelry(
+        self,
+        query: str = None,
+        image_bytes: bytes = None,
+        user_id: str = None,
+        jewelry_type: str = None,
+        limit: int = 10,
+        min_score: float = 0.2
+    ) -> Dict[str, Any]:
+        """
+        Specialized search for jewelry items with better type filtering.
+        
+        Args:
+            query: Text query (e.g., "gold necklace")
+            image_bytes: Image data as bytes
+            user_id: User ID for filtering
+            jewelry_type: Specific type of jewelry (e.g., "necklace", "ring")
+            limit: Maximum number of results
+            min_score: Minimum similarity score (0.0 to 1.0)
+            
+        Returns:
+            Dictionary with search results and metadata
+        """
+        try:
+            logger.info(f"Starting jewelry search - Query: '{query}', Type: {jewelry_type}")
+            
+            # Normalize user ID format
+            normalized_user_id = self._normalize_user_id(user_id) if user_id else None
+            
+            # Enhance query with jewelry context if needed
+            enhanced_query = query or ""
+            if query and not any(word in query.lower() for word in ["jewelry", "jewellery"]):
+                enhanced_query = f"{query} jewelry"
+            
+            # Generate embeddings
+            query_embedding = None
+            if enhanced_query and image_bytes:
+                # Combine text and image embeddings (60% text, 40% image)
+                text_embedding = clip_manager.get_text_embedding(enhanced_query)
+                image_embedding = clip_manager.get_image_embedding(image_bytes)
+                query_embedding = [0.6 * t + 0.4 * i for t, i in zip(text_embedding, image_embedding)]
+            elif enhanced_query:
+                query_embedding = clip_manager.get_text_embedding(enhanced_query)
+            elif image_bytes:
+                query_embedding = clip_manager.get_image_embedding(image_bytes)
+            
+            if query_embedding is None:
+                raise ValueError("Either query text or image must be provided")
+            
+            # Build filter conditions for jewelry
+            filter_conditions = {"category": {"$regex": "jewel(r?y|ies)", "$options": "i"}}
+            
+            # Add jewelry type filter if specified
+            if jewelry_type:
+                filter_conditions["name"] = {"$regex": jewelry_type, "$options": "i"}
+            
+            # Add user filter if specified
+            if normalized_user_id:
+                filter_conditions["user_id"] = normalized_user_id
+            
+            # Debug: Check how many jewelry products exist in the database
+            jewelry_count = self.db.products.count_documents({"category": {"$regex": "jewel(r?y|ies)", "$options": "i"}})
+            logger.info(f"Found {jewelry_count} jewelry products in the database")
+            
+            # Debug: Log a sample of jewelry products
+            if jewelry_count > 0:
+                sample_products = list(self.db.products.find(
+                    {"category": {"$regex": "jewel(r?y|ies)", "$options": "i"}},
+                    {"name": 1, "category": 1, "user_id": 1, "_id": 0}
+                ).limit(3))
+                logger.info(f"Sample jewelry products: {sample_products}")
+            
+            logger.info(f"Searching jewelry with filter: {filter_conditions}")
+            
+            # Log the query embedding for debugging
+            logger.info(f"Searching with embedding (first 5 dims): {query_embedding[:5] if query_embedding else 'None'}")
+            
+            # Make search more lenient by lowering the min_score if it's too high
+            effective_min_score = max(0.1, min_score)  # Ensure min_score is not too high
+            
+            # Temporarily remove user filter to see more results
+            user_id_filter = filter_conditions.pop("user_id", None)
+            
+            # Get user ID for filtering if available
+            user_id = filter_conditions.pop("user_id", None)
+            
+            # Search Qdrant with the embedding using search_similar_products
+            # For jewelry, use exact category name instead of regex pattern
+            category_filter = None
+            if filter_conditions.get("category", {}).get("$regex") == "jewel(r?y|ies)":
+                category_filter = "Jewellery"  # Use exact category name for Qdrant (British spelling)
+            elif filter_conditions.get("category", {}).get("$regex") == "clothing":
+                category_filter = "Clothes"  # Map "clothing" to "Clothes" for Qdrant
+            else:
+                category_filter = filter_conditions.get("category", {}).get("$regex")
+            
+            search_results = qdrant_manager.search_similar_products(
+                query_embedding=query_embedding,
+                user_id=user_id,
+                category_filter=category_filter,
+                limit=limit * 5,  # Get more results for better filtering
+                min_score=effective_min_score
+            )
+            
+            if not isinstance(search_results, list):
+                logger.error(f"Unexpected search results type: {type(search_results)}")
+                return {
+                    "results": [],
+                    "query": query or "",
+                    "jewelry_type": jewelry_type,
+                    "total_results": 0,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+            logger.info(f"Found {len(search_results)} potential matches before filtering")
+            
+            if not search_results:
+                logger.warning("No search results returned from Qdrant")
+                return {
+                    "results": [],
+                    "query": query or "",
+                    "jewelry_type": jewelry_type,
+                    "total_results": 0,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+            # Get product details from MongoDB for the search results
+            product_ids = []
+            for item in search_results:
+                try:
+                    # Handle both dictionary and object access for backward compatibility
+                    # Qdrant results have mongo_id in payload
+                    if hasattr(item, 'payload'):
+                        product_id = item.payload.get('mongo_id')
+                    elif isinstance(item, dict) and 'payload' in item:
+                        product_id = item['payload'].get('mongo_id')
+                    elif hasattr(item, 'id'):
+                        product_id = item.id
+                    else:
+                        product_id = item.get('id')
+                    
+                    if product_id:
+                        product_ids.append(ObjectId(product_id))
+                except Exception as e:
+                    logger.warning(f"Error processing search result item: {str(e)}")
+            
+            if not product_ids:
+                logger.warning("No valid product IDs found in search results")
+                return {
+                    "results": [],
+                    "query": query or "",
+                    "jewelry_type": jewelry_type,
+                    "total_results": 0,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+            # Fetch all products in a single query for better performance
+            products_map = {
+                str(product["_id"]): product 
+                for product in self.db.products.find({"_id": {"$in": product_ids}})
+            }
+            
+            # Process and rank results
+            results = []
+            for item in search_results:
+                try:
+                    # Handle both dictionary and object access for backward compatibility
+                    if hasattr(item, 'payload'):
+                        product_id = str(item.payload.get('mongo_id', ''))
+                        score = getattr(item, 'score', 0)
+                        payload = item.payload
+                    elif isinstance(item, dict) and 'payload' in item:
+                        product_id = str(item['payload'].get('mongo_id', ''))
+                        score = item.get('score', 0)
+                        payload = item['payload']
+                    elif hasattr(item, 'id'):
+                        product_id = str(item.id)
+                        score = getattr(item, 'score', 0)
+                        payload = getattr(item, 'payload', {})
+                    else:
+                        product_id = str(item.get('id', ''))
+                        score = item.get('score', 0)
+                        payload = item.get('payload', {})
+                    
+                    if not product_id or product_id == 'None':
+                        logger.debug("Skipping item with missing or invalid product ID")
+                        continue
+                        
+                    product = products_map.get(product_id)
+                    if not product:
+                        logger.warning(f"Product not found in MongoDB: {product_id}")
+                        continue
+                    
+                    # Log product details for debugging
+                    product_name = product.get('name', 'Unnamed Product')
+                    logger.debug(f"Processing product: {product_name} (ID: {product_id})")
+                    
+                    # Calculate relevance score with bonus for type matches
+                    relevance_score = float(score)
+                    
+                    # Boost score if product name contains the jewelry type
+                    if jewelry_type and jewelry_type.lower() in product_name.lower():
+                        relevance_score *= 1.5
+                        logger.debug(f"Boosted score for {product_name} - New score: {relevance_score}")
+                    
+                    # Get additional fields from payload if available
+                    product_category = payload.get('category', product.get('category', ''))
+                    
+                    # Add to results
+                    results.append({
+                        "id": product_id,
+                        "name": product_name,
+                        "description": product.get("description", ""),
+                        "price": float(product.get("price", 0)),
+                        "category": product_category,
+                        "image_url": product.get("image_url", ""),
+                        "similarity_score": float(score),
+                        "relevance_score": relevance_score
+                    })
+                except Exception as e:
+                    logger.error(f"Error processing search result: {str(e)}", exc_info=True)
+                    continue
+            
+            # Sort by relevance score (highest first)
+            results.sort(key=lambda x: x["relevance_score"], reverse=True)
+            
+            # Apply limit
+            results = results[:limit]
+            
+            if not results:
+                logger.warning("No jewelry items found matching the query after filtering")
+                return {
+                    "results": [],
+                    "query": query or "",
+                    "jewelry_type": jewelry_type,
+                    "total_results": 0,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            
+            logger.info(f"Found {len(results)} jewelry items (top score: {results[0]['similarity_score']:.3f})")
+            for i, r in enumerate(results[:3], 1):
+                logger.info(f"  {i}. {r['name']} (Score: {r['similarity_score']:.3f})")
+            
+            return {
+                "results": results,
+                "query": query or "",
+                "jewelry_type": jewelry_type,
+                "total_results": len(results),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in search_jewelry: {str(e)}", exc_info=True)
+            raise
 
     async def search_products(
         self, 
@@ -313,7 +599,7 @@ class ProductHandler:
         user_id: str = None,
         category: str = None,
         limit: int = 10,
-        min_score: float = 0.1,
+        min_score: float = 0.2,
         sort_by: str = "relevance"
     ) -> Dict[str, Any]:
         """
@@ -322,8 +608,8 @@ class ProductHandler:
         Args:
             query: Text query describing the product
             image_bytes: Image data as bytes
-            user_id: User ID for filtering results (supports UUID, ObjectId, or username)
-            category: Product category to filter by (auto-detected if not provided)
+            user_id: User ID for filtering results
+            category: Product category to filter by
             limit: Maximum number of results to return
             min_score: Minimum similarity score (0.0 to 1.0)
             sort_by: How to sort results ("relevance", "price_asc", "price_desc", "newest")
@@ -332,435 +618,319 @@ class ProductHandler:
             Dictionary with search results and metadata
         """
         try:
-            logger.info(f"Starting enhanced product search - Query: '{query}', Category: {category}, User: {user_id}, Limit: {limit}")
+            # Define product types and their variations
+            product_types = {
+                # Jewelry
+                'earring': {
+                    'keywords': ['earring', 'earrings', 'stud', 'studs', 'hoop', 'hoops', 'dangle'],
+                    'category': 'jewelry'
+                },
+                'ring': {
+                    'keywords': ['ring', 'rings', 'band', 'bands', 'wedding ring', 'engagement ring'],
+                    'category': 'jewelry'
+                },
+                'necklace': {
+                    'keywords': ['necklace', 'necklaces', 'pendant', 'pendants', 'chain', 'chains', 'choker'],
+                    'category': 'jewelry'
+                },
+                'bracelet': {
+                    'keywords': ['bracelet', 'bracelets', 'bangle', 'bangles', 'cuff', 'cuffs'],
+                    'category': 'jewelry'
+                },
+                'watch': {
+                    'keywords': ['watch', 'watches', 'timepiece', 'wristwatch'],
+                    'category': 'jewelry'
+                },
+                # Electronics
+                'smartphone': {
+                    'keywords': ['smartphone', 'phone', 'mobile', 'iphone', 'android', 'cellphone'],
+                    'category': 'electronics'
+                },
+                'laptop': {
+                    'keywords': ['laptop', 'notebook', 'macbook', 'ultrabook', 'chromebook'],
+                    'category': 'electronics'
+                },
+                'headphones': {
+                    'keywords': ['headphones', 'earbuds', 'earphones', 'airpods', 'headset', 'earpods'],
+                    'category': 'electronics'
+                },
+                'tablet': {
+                    'keywords': ['tablet', 'ipad', 'android tablet', 'e-reader', 'kindle'],
+                    'category': 'electronics'
+                },
+                'camera': {
+                    'keywords': ['camera', 'dslr', 'mirrorless', 'point and shoot', 'action camera'],
+                    'category': 'electronics'
+                },
+                'tv': {
+                    'keywords': ['tv', 'television', 'smart tv', '4k tv', 'led tv', 'oled tv'],
+                    'category': 'electronics'
+                },
+                # Add more categories and product types as needed
+            }
             
-            # Normalize user ID format
-            normalized_user_id = self._normalize_user_id(user_id)
+            # Detect product type from query
+            product_type = None
+            detected_category = category
+            query_lower = query.lower() if query else ""
             
-            # Auto-detect category from query if not explicitly provided
-            if not category and query:
-                category = self._detect_category_from_query(query)
+            # Check for product type in query with improved keyword matching
+            for p_type, p_data in product_types.items():
+                if any(keyword in query_lower for keyword in p_data['keywords']):
+                    product_type = p_type
+                    if not detected_category:
+                        detected_category = p_data['category']
+                    break
             
-            # Generate embeddings based on input
-            query_embedding = None
+            # Enhance query with product type if found
+            enhanced_query = query
+            if product_type and not any(word in query_lower for word in [product_type, product_type + 's']):
+                enhanced_query = f"{query} {product_type}"
             
-            if query and image_bytes:
-                # Both text and image provided - combine embeddings
-                text_embedding = clip_manager.get_text_embedding(query)
-                image_embedding = clip_manager.get_image_embedding(image_bytes)
-                
-                # Weighted combination (60% text, 40% image)
-                query_embedding = [
-                    0.6 * t + 0.4 * i 
-                    for t, i in zip(text_embedding, image_embedding)
-                ]
-                logger.info("Combined text and image embeddings")
-                
-            elif query:
-                # Text only
-                query_embedding = clip_manager.get_text_embedding(query)
-                logger.info("Generated text embedding")
-                
-            elif image_bytes:
-                # Image only
-                query_embedding = clip_manager.get_image_embedding(image_bytes)
-                logger.info("Generated image embedding")
-                
-            else:
-                return {
-                    "status": "error", 
-                    "message": "Either query text or image must be provided",
-                    "results": []
-                }
-            
-            if not query_embedding:
-                return {
-                    "status": "error",
-                    "message": "Failed to generate query embedding",
-                    "results": []
-                }
-            
-            logger.info(f"Generated embedding with {len(query_embedding)} dimensions")
-            
-            # Determine user ID for filtering
-            qdrant_user_id = None
-            if normalized_user_id:
-                try:
-                    user = None
-                    
-                    # Try different user lookup strategies
-                    if self._is_valid_objectid(normalized_user_id):
-                        # Try ObjectId lookup first
-                        user = self.db.users.find_one({"_id": ObjectId(normalized_user_id)})
-                        logger.debug(f"Tried ObjectId lookup for {normalized_user_id}: {'found' if user else 'not found'}")
-                    
-                    if not user and '-' in normalized_user_id:
-                        # Try UUID lookup
-                        user = self.db.users.find_one({"user_id": normalized_user_id})
-                        logger.debug(f"Tried UUID lookup for {normalized_user_id}: {'found' if user else 'not found'}")
-                    
-                    if not user:
-                        # Fallback to username lookup
-                        user = self.db.users.find_one({"username": normalized_user_id})
-                        logger.debug(f"Tried username lookup for {normalized_user_id}: {'found' if user else 'not found'}")
-                    
-                    if user:
-                        qdrant_user_id = user.get("user_id", str(user.get("_id", normalized_user_id)))
-                        logger.info(f"Successfully found user with qdrant_user_id: {qdrant_user_id}")
-                    else:
-                        logger.warning(f"User not found with any ID format: {normalized_user_id}")
-                        
-                except Exception as e:
-                    logger.error(f"Error finding user with ID {normalized_user_id}: {e}")
-                    # Last resort: try direct lookup with the original ID
-                    try:
-                        user = self.db.users.find_one({"user_id": normalized_user_id})
-                        if user:
-                            qdrant_user_id = user.get("user_id", str(user.get("_id", normalized_user_id)))
-                            logger.info(f"Fallback user lookup successful with qdrant_user_id: {qdrant_user_id}")
-                    except Exception as fallback_error:
-                        logger.error(f"Fallback user lookup also failed: {fallback_error}")
-            
-            # Search in Qdrant with user filtering and category filtering
-            logger.info(f"Searching Qdrant with user: {qdrant_user_id}, category: {category}, limit: {limit}")
-            
-            try:
-                search_results = qdrant_manager.search_similar_products(
-                    query_embedding=query_embedding,
-                    user_id=qdrant_user_id,
-                    category_filter=category,
-                    limit=limit * 2,  # Get more results to filter further
+            # If this is a jewelry search, use the specialized function
+            if detected_category and "jewel" in detected_category.lower() and product_type in ['earring', 'ring', 'necklace', 'bracelet', 'watch']:
+                return await self.search_jewelry(
+                    query=enhanced_query,
+                    image_bytes=image_bytes,
+                    user_id=user_id,
+                    jewelry_type=product_type,
+                    limit=limit,
                     min_score=min_score
                 )
-                
-                logger.info(f"Qdrant search returned {len(search_results)} results")
-                if search_results:
-                    logger.info(f"First result score: {search_results[0].get('score', 0):.2f}")
-                    logger.info(f"First result type: {type(search_results[0])}")
-                    logger.info(f"First result keys: {list(search_results[0].keys()) if isinstance(search_results[0], dict) else 'not a dict'}")
-                
-                if not search_results and category:
-                    # Try without category filter if no results
-                    logger.info("No results with category filter, trying without category")
-                    search_results = qdrant_manager.search_similar_products(
-                        query_embedding=query_embedding,
-                        user_id=qdrant_user_id,
-                        limit=limit,
-                        min_score=min_score * 0.8  # Slightly lower threshold
-                    )
-                    
-                    if search_results:
-                        logger.info(f"Found {len(search_results)} results without category filter")
             
-            except Exception as e:
-                logger.error(f"Error in Qdrant search: {str(e)}", exc_info=True)
-                return {
-                    "status": "error",
-                    "message": "Error performing search",
-                    "results": []
-                }
+            logger.info(f"Starting product search - Query: '{enhanced_query}', Category: {detected_category}, Product Type: {product_type}")
             
-            # Retrieve product documents from MongoDB
+            # Normalize user ID format
+            normalized_user_id = self._normalize_user_id(user_id) if user_id else None
+            
+            # Generate embeddings based on enhanced query
+            query_embedding = None
+            
+            if enhanced_query and image_bytes:
+                # Both text and image provided - combine embeddings
+                text_embedding = clip_manager.get_text_embedding(enhanced_query)
+                image_embedding = clip_manager.get_image_embedding(image_bytes)
+                query_embedding = [0.5 * t + 0.5 * i for t, i in zip(text_embedding, image_embedding)]
+                logger.info("Combined text and image embeddings (50/50)")
+            elif enhanced_query:
+                query_embedding = clip_manager.get_text_embedding(enhanced_query)
+                logger.info("Generated text embedding")
+            elif image_bytes:
+                query_embedding = clip_manager.get_image_embedding(image_bytes)
+                logger.info("Generated image embedding")
+            
+            if query_embedding is None:
+                raise ValueError("Either query text or image must be provided")
+            
+            # Build filter conditions
+            filter_conditions = {}
+            if detected_category:
+                filter_conditions["category"] = detected_category.lower()
+            
+            # Add user filter if specified
+            if normalized_user_id:
+                filter_conditions["user_id"] = normalized_user_id
+            
+            # If we have a specific product type, add it to the filter
+            if product_type:
+                # For jewelry, use jewelry_type, for others use product_type
+                if detected_category and "jewel" in detected_category.lower():
+                    filter_conditions["jewelry_type"] = product_type
+                else:
+                    filter_conditions["product_type"] = product_type
+            
+            logger.info(f"Searching with filter: {filter_conditions}")
+            
+            # Get category filter if specified
+            category_filter = filter_conditions.get("category")
+            
+            # Map detected categories to Qdrant format (case-sensitive)
+            if category_filter == "clothing":
+                category_filter = "Clothes"
+            elif category_filter == "jewelry":
+                category_filter = "Jewellery"
+            
+            # Search Qdrant with the embedding using search_similar_products
+            search_results = qdrant_manager.search_similar_products(
+                query_embedding=query_embedding,
+                user_id=normalized_user_id,
+                category_filter=category_filter,
+                jewelry_type=product_type if category and "jewel" in category.lower() else None,  # Pass jewelry type to the search
+                limit=limit * 2,  # Get more results for better filtering
+                min_score=min_score
+            )
+            
             if not search_results:
                 return {
-                    "status": "success",
-                    "message": "No matching products found",
-                    "results": []
+                    "results": [],
+                    "query": query or "",
+                    "category": category,
+                    "total_results": 0,
+                    "timestamp": datetime.utcnow().isoformat()
                 }
                 
-            try:
-                # Extract product IDs from search results
-                product_ids = []
-                for hit in search_results:
-                    if isinstance(hit, dict) and "product_id" in hit:
-                        product_ids.append(hit["product_id"])
-                        logger.info(f"Extracted product_id: {hit['product_id']}")
-                    else:
-                        logger.warning(f"Unexpected search result format: {hit}")
-                
-                logger.info(f"Total product IDs extracted: {len(product_ids)}")
-                logger.info(f"First few product IDs: {product_ids[:3]}")
-                
-                if not product_ids:
-                    return {
-                        "status": "success",
-                        "message": "No valid product IDs found in search results",
-                        "results": []
-                    }
-                
-                logger.info(f"Retrieving {len(product_ids)} products from MongoDB")
-                
-                # Convert string IDs to ObjectIds for MongoDB query
-                object_ids = []
-                invalid_ids = []
-                for pid in product_ids:
-                    try:
-                        object_ids.append(ObjectId(pid))
-                        logger.info(f"Converted {pid} to ObjectId")
-                    except Exception as e:
-                        invalid_ids.append(pid)
-                        logger.warning(f"Invalid product ID format: {pid} - {str(e)}")
-                
-                logger.info(f"Valid ObjectIds: {len(object_ids)}, Invalid IDs: {len(invalid_ids)}")
-                
-                if not object_ids and invalid_ids:
-                    logger.error(f"All product IDs were invalid: {invalid_ids}")
-                    return {
-                        "status": "error",
-                        "message": "Invalid product references found",
-                        "results": []
-                    }
-                
-                # Get products from MongoDB
-                try:
-                    logger.info(f"Querying MongoDB with ObjectIds: {object_ids}")
-                    products_cursor = self.db.products.find(
-                        {"_id": {"$in": object_ids}}
-                    ).hint("_id_")  # Use _id index for better performance
-                    
-                    # Create a dictionary to store products by ID for efficient lookup
-                    products_by_id = {}
-                    product_count = 0
-                    for product in products_cursor:
-                        try:
-                            product_id = str(product.get("_id"))
-                            if product_id:
-                                products_by_id[product_id] = product
-                                product_count += 1
-                                logger.info(f"Found product in MongoDB: {product_id}")
-                            else:
-                                logger.warning("Product missing _id field")
-                        except Exception as e:
-                            logger.error(f"Error processing product: {str(e)}")
-                    
-                    logger.info(f"Total products found in MongoDB: {product_count}")
-                    logger.info(f"Products by ID keys: {list(products_by_id.keys())}")
-                    
-                    # Process search results and prepare response
-                    products_dict = {}
-                    seen_products = set()  # Track seen product IDs to avoid duplicates
-                    
-                    for hit in search_results:
-                        if not isinstance(hit, dict) or "product_id" not in hit:
-                            logger.warning(f"Skipping invalid hit format: {hit}")
-                            continue
-                            
-                        product_id = hit["product_id"]
-                        logger.info(f"Processing product_id: {product_id}")
-                        
-                        # Skip if we've already processed this product
-                        if product_id in seen_products:
-                            logger.info(f"Skipping duplicate product: {product_id}")
-                            continue
-                            
-                        product = products_by_id.get(product_id)
-                        
-                        if not product:
-                            logger.warning(f"Product not found in MongoDB: {product_id}")
-                            continue
-                        
-                        # Mark this product as seen
-                        seen_products.add(product_id)
-                        
-                        # Calculate a normalized score (0-100)
-                        raw_score = hit.get("score", 0.0)
-                        try:
-                            raw_score = float(raw_score) if raw_score is not None else 0.0
-                        except (ValueError, TypeError):
-                            raw_score = 0.0
-                        normalized_score = min(max(0, int(raw_score * 100)), 100)
-                        
-                        # Get additional metadata from Qdrant payload if available
-                        payload = hit.get("payload", {})
-                        
-                        # Validate product data before processing
-                        logger.info(f"Validating product: {product_id}")
-                        if not self._validate_product_data(product):
-                            logger.warning(f"Skipping invalid product data for ID: {product_id}")
-                            continue
-                        
-                        # Calculate enhanced relevance score
-                        relevance_score = self._calculate_relevance_score(
-                            product, query, category, raw_score
-                        )
-                        logger.info(f"Product {product_id} relevance score: {relevance_score}")
-                        
-                        # Create result dictionary
-                        result = {
-                            "id": str(product.get("_id", "")),
-                            "name": payload.get("name") or product.get("name", "Unnamed Product"),
-                            "description": payload.get("description") if payload.get("description") is not None else product.get("description", ""),
-                            "price": float(payload.get("price") if payload.get("price") is not None else product.get("price", 0.0)),
-                            "category": payload.get("category") if payload.get("category") is not None else product.get("category", "other"),
-                            "image_url": payload.get("image_url") if payload.get("image_url") is not None else product.get("image_url", ""),
-                            "similarity_score": raw_score,
-                            "match_percentage": normalized_score,
-                            "relevance_score": relevance_score,
-                            "in_stock": product.get("in_stock", True),
-                            "created_at": product.get("created_at", ""),
-                            "created_by": product.get("created_by", ""),
-                            "metadata": {
-                                "source": "vector_search",
-                                "has_image": bool(payload.get("image_url") or product.get("image_url")),
-                                "category_matched": bool(category and category.lower() in (payload.get("category", "") or "").lower()),
-                                "validation_passed": True
-                            }
-                        }
-                        
-                        # Add any additional fields from the payload
-                        for key, value in payload.items():
-                            if key not in result and key not in ["text_embedding", "image_embedding"]:
-                                result[key] = value
-                        
-                        products_dict[product_id] = result
-                    
-                    logger.info(f"Products processed into dict: {len(products_dict)} items")
-                    logger.info(f"Products dict keys: {list(products_dict.keys())}")
-                    
-                    if not products_dict:
-                        logger.warning("No valid products found after processing search results")
-                        return {
-                            "status": "success",
-                            "message": "No matching products found",
-                            "results": []
-                        }
-                    
-                    # Convert to list and sort by enhanced relevance score
-                    products = list(products_dict.values())
-                    
-                    # Log relevance scores before filtering
-                    logger.info(f"Products before filtering - count: {len(products)}")
-                    for i, p in enumerate(products[:5]):  # Log first 5 products
-                        logger.info(f"Product {i+1}: {p.get('name', 'Unknown')} - relevance_score: {p.get('relevance_score', 0)}")
-                    
-                    # Sort based on the specified sort criteria
-                    if sort_by == "relevance":
-                        products.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
-                    elif sort_by == "price_asc":
-                        products.sort(key=lambda x: x.get("price", 0))
-                    elif sort_by == "price_desc":
-                        products.sort(key=lambda x: x.get("price", 0), reverse=True)
-                    elif sort_by == "newest":
-                        products.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-                    else:
-                        # Default to relevance score
-                        products.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
-                    
-                    logger.info(f"After sorting: {len(products)} products")
-                    
-                    # Apply additional filtering based on minimum relevance score
-                    logger.info(f"Before min_score filtering: {len(products)} products, min_score: {min_score}, threshold: {min_score * 100}")
-                    if min_score > 0:
-                        products = [p for p in products if p.get("relevance_score", 0) >= min_score * 100]
-                        logger.info(f"After min_score filtering: {len(products)} products remaining")
-                    else:
-                        logger.info(f"No min_score filtering applied (min_score = 0)")
-                    
-                    # Apply category filter if specified (additional filtering)
-                    if category:
-                        logger.info(f"Applying category filter: {category}")
-                        logger.info(f"Products before category filter:")
-                        for i, p in enumerate(products[:3]):  # Show first 3 products
-                            logger.info(f"  Product {i+1}: {p.get('name')} - Category: '{p.get('category', 'No category')}'")
-                        # More flexible category matching - handle common variations
-                        category_lower = category.lower()
-                        products = [p for p in products if 
-                            category_lower in p.get("category", "").lower() or  # Original substring match
-                            (category_lower == "clothing" and p.get("category", "").lower() == "clothes") or  # Handle clothing/clothes
-                            (category_lower == "clothes" and p.get("category", "").lower() == "clothing") or  # Handle clothes/clothing
-                            (category_lower == "jewelry" and p.get("category", "").lower() == "jewellery") or  # Handle jewelry/jewellery
-                            (category_lower == "jewellery" and p.get("category", "").lower() == "jewelry") or  # Handle jewellery/jewelry
-                            p.get("category", "").lower().replace(" ", "") == category_lower.replace(" ", "")  # Exact match ignoring spaces
-                        ]
-                        logger.info(f"After category filtering: {len(products)} products")
-                    
-                    # Apply intelligent filtering - only show products with significant relevance
-                    logger.info(f"Before intelligent filtering: {len(products)} products")
-                    if len(products) > 1:
-                        # Calculate score gaps between consecutive products
-                        score_gaps = []
-                        for i in range(1, min(len(products), 5)):  # Look at top 5 gaps
-                            gap = products[i-1].get('relevance_score', 0) - products[i].get('relevance_score', 0)
-                            score_gaps.append(gap)
-                        
-                        logger.info(f"Score gaps: {score_gaps}")
-                        
-                        # Find the largest gap in top results
-                        if score_gaps and max(score_gaps) > 10:  # If there's a significant gap (>10 points)
-                            gap_index = score_gaps.index(max(score_gaps))
-                            products = products[:gap_index + 1]  # Cut off at the gap
-                            logger.info(f"Filtered results to {len(products)} products due to significant score gap of {max(score_gaps):.1f}")
-                        else:
-                            # If no significant gaps, only show products above 70% relevance
-                            high_relevance_products = [p for p in products if p.get('relevance_score', 0) >= 70]
-                            logger.info(f"High relevance products (>=70%): {len(high_relevance_products)}")
-                            if high_relevance_products:
-                                products = high_relevance_products
-                                logger.info(f"Filtered to {len(products)} high-relevance products (>=70%)")
-                            else:
-                                # If no high relevance products, show top 3 maximum
-                                products = products[:3]
-                                logger.info(f"Limited to top 3 products due to low overall relevance")
-                    else:
-                        # For single or no results, keep as is
-                        logger.info(f"Single or no results, keeping as is: {len(products)} products")
-                        pass
-                    
-                    logger.info(f"After intelligent filtering: {len(products)} products")
-                    logger.info(f"Search completed. Found {len(products)} results")
-                    if products:
-                        logger.debug(f"Top result: {products[0]['name']} (Relevance: {products[0]['relevance_score']:.1f}, Similarity: {products[0]['similarity_score']:.2f})")
-                    
-                    # Calculate search statistics
-                    avg_relevance = sum(p.get('relevance_score', 0) for p in products) / len(products) if products else 0
-                    avg_similarity = sum(p.get('similarity_score', 0) for p in products) / len(products) if products else 0
-                    
-                    return {
-                        "status": "success",
-                        "count": len(products),
-                        "query": query,
-                        "category": category,
-                        "sort_by": sort_by,
-                        "results": products,
-                        "metadata": {
-                            "has_query": bool(query),
-                            "has_image": bool(image_bytes),
-                            "filtered_by_category": bool(category),
-                            "user_id": user_id,
-                            "normalized_user_id": normalized_user_id,
-                            "qdrant_user_id": qdrant_user_id,
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "search_stats": {
-                                "total_found": len(products),
-                                "average_relevance_score": round(avg_relevance, 2),
-                                "average_similarity_score": round(avg_similarity, 3),
-                                "min_relevance_score": min([p.get('relevance_score', 0) for p in products], default=0) if products else 0,
-                                "max_relevance_score": max([p.get('relevance_score', 0) for p in products], default=0) if products else 0
-                            },
-                            "validation": {
-                                "user_lookup_success": bool(qdrant_user_id),
-                                "products_validated": len([p for p in products if p.get('metadata', {}).get('validation_passed')]),
-                                "invalid_products_skipped": len(invalid_ids) if 'invalid_ids' in locals() else 0
-                            }
-                        }
-                    }
-                    
-                except Exception as e:
-                    logger.error(f"Error processing search results: {str(e)}", exc_info=True)
-                    return {
-                        "status": "error",
-                        "message": "Error processing search results",
-                        "results": []
-                    }
-                        
-            except Exception as e:
-                logger.error(f"Error in search_products: {str(e)}", exc_info=True)
+            # Get product details from MongoDB for the search results
+            product_ids = [ObjectId(item.get("product_id")) for item in search_results if item.get("product_id")]
+            
+            if not product_ids:
                 return {
-                    "status": "error",
-                    "message": "An error occurred while processing your search",
-                    "results": []
+                    "results": [],
+                    "query": query or "",
+                    "category": category,
+                    "total_results": 0,
+                    "timestamp": datetime.utcnow().isoformat()
                 }
-        
+                
+            # Fetch all products in a single query for better performance
+            products_map = {
+                str(product["_id"]): product 
+                for product in self.db.products.find({"_id": {"$in": product_ids}})
+            }
+            
+            # Process and rank results
+            results = []
+            for item in search_results:
+                try:
+                    product_id = str(item.get("product_id"))
+                    if not product_id or product_id == 'None':
+                        continue
+                        
+                    product = products_map.get(product_id)
+                    if not product:
+                        logger.warning(f"Product not found in MongoDB: {product_id}")
+                        continue
+                    
+                    # Log product details for debugging
+                    logger.debug(f"Processing product: {product.get('name')} (ID: {product_id})")
+                    
+                    # Calculate relevance score
+                    relevance_score = self._calculate_relevance_score(
+                        product=product,
+                        query=query or "",
+                        category=category or "",
+                        similarity_score=item.get("score", 0)
+                    )
+                    
+                    # Add to results
+                    results.append({
+                        "id": product_id,
+                        "name": product.get("name", ""),
+                        "description": product.get("description", ""),
+                        "price": float(product.get("price", 0)),
+                        "category": product.get("category", ""),
+                        "image_url": product.get("image_url", ""),
+                        "similarity_score": float(item.get("score", 0)),
+                        "relevance_score": relevance_score
+                    })
+                except Exception as e:
+                    logger.error(f"Error processing search result: {str(e)}", exc_info=True)
+                    continue
+            
+            # Process the results after collecting them
+            logger.info(f"After category filtering: {len(results)} products")
+            
+            # Apply intelligent filtering - only show products with significant relevance
+            if results:
+                # Sort results by relevance score
+                results.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
+                
+                # If we have more than one result, analyze score gaps
+                if len(results) > 1:
+                    # Calculate score gaps between consecutive products
+                    score_gaps = []
+                    for i in range(1, min(len(results), 5)):  # Look at top 5 gaps
+                        gap = results[i-1].get('relevance_score', 0) - results[i].get('relevance_score', 0)
+                        score_gaps.append(gap)
+                    
+                    logger.info(f"Score gaps: {score_gaps}")
+                    
+                    # Find the largest gap in top results
+                    if score_gaps and max(score_gaps) > 10:  # If there's a significant gap (>10 points)
+                        gap_index = score_gaps.index(max(score_gaps))
+                        results = results[:gap_index + 1]  # Cut off at the gap
+                        logger.info(f"Filtered results to {len(results)} products due to significant score gap of {max(score_gaps):.1f}")
+                    else:
+                        # If no significant gaps, only show products above 70% relevance
+                        high_relevance_products = [p for p in results if p.get('relevance_score', 0) >= 70]
+                        logger.info(f"High relevance products (>=70%): {len(high_relevance_products)}")
+                        
+                        if high_relevance_products:
+                            results = high_relevance_products
+                            logger.info(f"Filtered to {len(results)} high-relevance products (>=70%)")
+                        else:
+                            # If no high relevance products, show top 3 maximum
+                            results = results[:3]
+                            logger.info("Limited to top 3 products due to low overall relevance")
+                
+                # Log final results
+                logger.info(f"After intelligent filtering: {len(results)} products")
+                logger.info(f"Search completed. Found {len(results)} results")
+                
+                if results:
+                    logger.debug(f"Top result: {results[0].get('name', 'N/A')} "
+                                f"(Relevance: {results[0].get('relevance_score', 0):.1f}, "
+                                f"Similarity: {results[0].get('similarity_score', 0):.2f})")
+                
+                # Calculate search statistics
+                avg_relevance = sum(p.get('relevance_score', 0) for p in results) / len(results) if results else 0
+                avg_similarity = sum(p.get('similarity_score', 0) for p in results) / len(results) if results else 0
+                
+                # Prepare final response
+                response = {
+                    "status": "success",
+                    "count": len(results),
+                    "query": query or "",
+                    "category": category,
+                    "sort_by": sort_by,
+                    "results": results,
+                    "metadata": {
+                        "avg_relevance": round(avg_relevance, 2),
+                        "avg_similarity": round(avg_similarity, 4),
+                        "has_query": bool(query),
+                        "has_image": bool(image_bytes),
+                        "filtered_by_category": bool(category),
+                        "user_id": user_id,
+                        "normalized_user_id": normalized_user_id,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "search_stats": {
+                            "total_found": len(results),
+                            "average_relevance_score": round(avg_relevance, 2),
+                            "average_similarity_score": round(avg_similarity, 3),
+                            "min_relevance_score": min([p.get('relevance_score', 0) for p in results], default=0) if results else 0,
+                            "max_relevance_score": max([p.get('relevance_score', 0) for p in results], default=0) if results else 0
+                        }
+                    }
+                }
+                
+                return response
+            else:
+                # No results found
+                return {
+                    "status": "success",
+                    "count": 0,
+                    "query": query or "",
+                    "category": category,
+                    "sort_by": sort_by,
+                    "results": [],
+                    "metadata": {
+                        "avg_relevance": 0,
+                        "avg_similarity": 0,
+                        "has_query": bool(query),
+                        "has_image": bool(image_bytes),
+                        "filtered_by_category": bool(category),
+                        "user_id": user_id,
+                        "normalized_user_id": normalized_user_id,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "search_stats": {
+                            "total_found": 0,
+                            "average_relevance_score": 0,
+                            "average_similarity_score": 0,
+                            "min_relevance_score": 0,
+                            "max_relevance_score": 0
+                        }
+                    }
+                }
+                
         except Exception as e:
             error_msg = f"Error in search_products: {str(e)}"
             logger.error(error_msg, exc_info=True)

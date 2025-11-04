@@ -25,14 +25,33 @@ class JewelryAPI {
             });
 
             const data = await response.json();
+            console.log('Login response:', data);
 
             if (response.ok) {
-                this.accessToken = data.access_token;
-                this.userInfo = { username, email: data.email || username };
+                // Handle both access_token and accessToken for backward compatibility
+                this.accessToken = data.access_token || data.accessToken;
+                if (!this.accessToken) {
+                    console.error('No access token in response:', data);
+                    return { 
+                        success: false, 
+                        error: 'Invalid server response: missing access token' 
+                    };
+                }
+
+                this.userInfo = { 
+                    username: username,
+                    email: data.email || username,
+                    userId: data.user_id || data.userId
+                };
+                
                 this.saveAuthData();
                 return { success: true, data };
             } else {
-                return { success: false, error: data.detail || 'Login failed' };
+                console.error('Login failed:', data);
+                return { 
+                    success: false, 
+                    error: data.detail || data.message || 'Login failed. Please check your username and password.' 
+                };
             }
         } catch (error) {
             return { success: false, error: 'Connection error. Please check if the server is running.' };
@@ -265,8 +284,10 @@ class JewelryAPI {
             // Create FormData for image upload
             const formData = new FormData();
             formData.append('session_id', session_id);
-            formData.append('query', searchParams.query || '');
             formData.append('image', imageFile);
+            if (searchParams.query) {
+                formData.append('query', searchParams.query);
+            }
             if (searchParams.category) {
                 formData.append('category', searchParams.category);
             }
@@ -304,33 +325,67 @@ class JewelryAPI {
     }
 
     // Utility methods
-    saveAuthData() {
-        if (this.accessToken && this.userInfo) {
-            localStorage.setItem('access_token', this.accessToken);
-            localStorage.setItem('user_info', JSON.stringify(this.userInfo));
+    async saveAuthData() {
+        try {
+            if (this.accessToken) {
+                localStorage.setItem('access_token', this.accessToken);
+                console.log('Saved access token to localStorage');
+            }
+            if (this.userInfo) {
+                localStorage.setItem('user_info', JSON.stringify(this.userInfo));
+                console.log('Saved user info to localStorage');
+            }
+        } catch (error) {
+            console.error('Error saving auth data:', error);
         }
     }
 
     loadAuthData() {
-        const token = localStorage.getItem('access_token');
-        const user = localStorage.getItem('user_info');
-        
-        if (token && user) {
-            this.accessToken = token;
-            this.userInfo = JSON.parse(user);
+        try {
+            const token = localStorage.getItem('access_token');
+            const userInfo = localStorage.getItem('user_info');
+            
+            if (token) {
+                this.accessToken = token;
+                console.log('Loaded access token from localStorage');
+            }
+            
+            if (userInfo) {
+                try {
+                    this.userInfo = JSON.parse(userInfo);
+                    console.log('Loaded user info from localStorage:', this.userInfo);
+                } catch (e) {
+                    console.error('Error parsing user info:', e);
+                    localStorage.removeItem('user_info');
+                }
+            }
+        } catch (error) {
+            console.error('Error loading auth data:', error);
+            this.clearAuthData();
         }
     }
 
     clearAuthData() {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('user_info');
+        try {
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('user_info');
+            console.log('Cleared auth data from localStorage');
+        } catch (error) {
+            console.error('Error clearing auth data:', error);
+        } finally {
+            this.accessToken = null;
+            this.userInfo = null;
+        }
     }
 
     isAuthenticated() {
-        return !!this.accessToken;
+        const isAuth = !!this.accessToken;
+        console.log('isAuthenticated:', isAuth);
+        return isAuth;
     }
 
     getUserInfo() {
+        console.log('Getting user info:', this.userInfo);
         return this.userInfo;
     }
 }

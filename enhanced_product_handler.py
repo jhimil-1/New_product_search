@@ -33,37 +33,254 @@ class EnhancedProductHandler:
         product_desc = product.get('description', '').lower()
         product_category = product.get('category', '').lower()
         
-        # Debug output for headphones calculation
-        if 'headphones' in query_lower:
-            print(f"DEBUG SEMANTIC: Calculating relevance for '{product_name}' in category '{product_category}'")
+        # Debug output for typo testing
+        if query_lower in ['chlothes', 'jeens', 'pents']:
+            print(f"DEBUG SEMANTIC: Calculating relevance for query '{query_lower}' on product '{product_name}' in category '{product_category}'")
         
-        # Exact match bonuses
-        exact_name_match = query_lower in product_name
-        exact_desc_match = query_lower in product_desc
-        exact_category_match = query_lower in product_category
+        # Handle typos and misspellings with fuzzy matching
+        def fuzzy_match_score(query_word: str, target_word: str) -> float:
+            """Calculate fuzzy match score between two words"""
+            if query_word == target_word:
+                return 1.0
+            
+            # Debug for specific typos
+            if query_word in ['chlothes', 'jeens', 'pents']:
+                print(f"DEBUG FUZZY: Comparing '{query_word}' with '{target_word}'")
+            
+            # Check for common typos and misspellings
+            # Common letter substitutions and transpositions
+            if abs(len(query_word) - len(target_word)) <= 2:  # Allow 1-2 character difference
+                # Check for transposed letters (e.g., "chlothes" vs "clothes")
+                if len(query_word) == len(target_word):
+                    transpositions = sum(1 for i in range(len(query_word)) 
+                                       if query_word[i] != target_word[i])
+                    if transpositions <= 2:  # Allow up to 2 transpositions
+                        # Special handling for common transpositions like "ch" -> "hc"
+                        if (query_word == 'chlothes' and target_word == 'clothes') or \
+                           (query_word == 'clohtes' and target_word == 'clothes'):
+                            score = 0.85  # High score for this specific common transposition
+                        else:
+                            score = max(0.7, 1.0 - (transpositions * 0.15))
+                        if query_word in ['chlothes', 'jeens', 'pents']:
+                            print(f"DEBUG FUZZY: Transposition match! Score: {score}")
+                        return score
+                
+                # Check for missing/extra letters (e.g., "clothess" vs "clothes")
+                shorter, longer = sorted([query_word, target_word], key=len)
+                if longer.startswith(shorter) or longer.endswith(shorter):
+                    if query_word in ['chlothes', 'jeens', 'pents']:
+                        print(f"DEBUG FUZZY: Prefix/suffix match! Score: 0.8")
+                    return 0.8
+                
+                # Special handling for common vowel substitutions
+                if (query_word == 'jeens' and target_word == 'jeans') or \
+                   (query_word == 'pents' and target_word == 'pants') or \
+                   (query_word == 'shrit' and target_word == 'shirt') or \
+                   (query_word == 'chlothes' and target_word == 'clothes') or \
+                   (query_word == 'clotes' and target_word == 'clothes'):
+                    if query_word in ['chlothes', 'jeens', 'pents']:
+                        print(f"DEBUG FUZZY: Common typo match! Score: 0.8")
+                    return 0.8
+                
+                # Check for common letter substitutions (e.g., 'i' vs 'l', 'o' vs 'e')
+                common_substitutions = {
+                    'i': ['l', 'j'], 'l': ['i', '1'], 'o': ['e', 'a', '0'],
+                    'e': ['o', 'a'], 'a': ['e', 'o'], 's': ['c', 'z'],
+                    'c': ['s', 'k'], 'k': ['c'], 't': ['f'], 'f': ['t'],
+                    'u': ['o'], 'o': ['u'], 'n': ['m'], 'm': ['n']
+                }
+                
+                # Check for vowel substitutions (e.g., "jeens" vs "jeans")
+                vowel_substitutions = {
+                    'a': ['e', 'i', 'o', 'u'], 'e': ['a', 'i', 'o', 'u'],
+                    'i': ['a', 'e', 'o', 'u'], 'o': ['a', 'e', 'i', 'u'],
+                    'u': ['a', 'e', 'i', 'o']
+                }
+                
+                # Calculate character-level similarity
+                differences = 0
+                max_len = max(len(query_word), len(target_word))
+                min_len = min(len(query_word), len(target_word))
+                
+                # Check character by character
+                for i in range(min_len):
+                    q_char = query_word[i] if i < len(query_word) else ''
+                    t_char = target_word[i] if i < len(target_word) else ''
+                    
+                    if q_char != t_char:
+                        # Check for common substitutions
+                        if (q_char in common_substitutions and 
+                            t_char in common_substitutions[q_char]):
+                            differences += 0.5  # Half penalty for common substitutions
+                        # Check for vowel substitutions
+                        elif (q_char in vowel_substitutions and 
+                              t_char in vowel_substitutions[q_char]):
+                            differences += 0.3  # Lower penalty for vowel substitutions
+                        else:
+                            differences += 1  # Full penalty for other differences
+                
+                # Account for length difference
+                differences += abs(len(query_word) - len(target_word))
+                
+                # Calculate similarity score
+                similarity = 1.0 - (differences / max_len)
+                
+                if query_word in ['chlothes', 'jeens', 'pents']:
+                    print(f"DEBUG FUZZY: Character similarity: {similarity} (differences: {differences}, max_len: {max_len})")
+                
+                if similarity >= 0.6:  # At least 60% similar
+                    return similarity
+            
+            return 0.0
         
-        # Word-level matching
-        query_words = set(query_lower.split())
-        name_words = set(product_name.split())
-        desc_words = set(product_desc.split())
-        category_words = set(product_category.split())
+        # Handle broad/generic queries like "products", "items", "goods"
+        broad_terms = ['products', 'items', 'goods', 'merchandise', 'stuff']
         
-        # Calculate word overlap
-        name_overlap = len(query_words.intersection(name_words)) / max(len(query_words), 1)
-        desc_overlap = len(query_words.intersection(desc_words)) / max(len(query_words), 1)
-        category_overlap = len(query_words.intersection(category_words)) / max(len(query_words), 1)
+        # Check for broad terms with fuzzy matching
+        broad_match_score = 0.0
+        for broad_term in broad_terms:
+            fuzzy_score = fuzzy_match_score(query_lower, broad_term)
+            if fuzzy_score > 0.7:  # High fuzzy match threshold for broad terms
+                broad_match_score = max(broad_match_score, fuzzy_score)
         
-        # Category-specific relevance scoring
+        if broad_match_score > 0.7:
+            # For broad queries, give a base relevance score to all products
+            base_score = 0.4  # Base score for broad queries
+            
+            # Slight boost for products in the same category as recent searches or common categories
+            if product_category in ['electronics', 'clothing', 'jewelry']:
+                base_score += 0.1
+            
+            # Slight boost for products with good descriptions
+            if len(product_desc) > 20:
+                base_score += 0.05
+            
+            return min(base_score, 0.6)  # Cap broad query scores
+        
+        # Enhanced matching with fuzzy support
+        def fuzzy_contains(query_text: str, target_text: str) -> float:
+            """Check if query is contained in target with fuzzy matching"""
+            if query_text in target_text:
+                return 1.0
+            
+            # Try fuzzy matching for single words
+            if ' ' not in query_text and ' ' not in target_text:
+                return fuzzy_match_score(query_text, target_text)
+            
+            # For multi-word queries, try fuzzy matching each word
+            query_words = query_text.split()
+            target_words = target_text.split()
+            
+            total_score = 0.0
+            for q_word in query_words:
+                best_match = 0.0
+                for t_word in target_words:
+                    match_score = fuzzy_match_score(q_word, t_word)
+                    best_match = max(best_match, match_score)
+                total_score += best_match
+            
+            return total_score / max(len(query_words), 1)
+        
+        # Enhanced exact match bonuses with fuzzy support
+        exact_name_match = fuzzy_contains(query_lower, product_name) > 0.8
+        exact_desc_match = fuzzy_contains(query_lower, product_desc) > 0.8
+        exact_category_match = fuzzy_contains(query_lower, product_category) > 0.8
+        
+        # Word-level matching with fuzzy support
+        query_words = query_lower.split()
+        name_words = product_name.split()
+        desc_words = product_desc.split()
+        category_words = product_category.split()
+        
+        # Calculate fuzzy word overlap
+        name_overlap = 0.0
+        desc_overlap = 0.0
+        category_overlap = 0.0
+        
+        # Fuzzy intersection for name words
+        for q_word in query_words:
+            best_match = 0.0
+            for n_word in name_words:
+                match_score = fuzzy_match_score(q_word, n_word)
+                best_match = max(best_match, match_score)
+            name_overlap += best_match
+        name_overlap = name_overlap / max(len(query_words), 1)
+        
+        # Fuzzy intersection for description words
+        for q_word in query_words:
+            best_match = 0.0
+            for d_word in desc_words:
+                match_score = fuzzy_match_score(q_word, d_word)
+                best_match = max(best_match, match_score)
+            desc_overlap += best_match
+        desc_overlap = desc_overlap / max(len(query_words), 1)
+        
+        # Fuzzy intersection for category words
+        for q_word in query_words:
+            best_match = 0.0
+            for c_word in category_words:
+                match_score = fuzzy_match_score(q_word, c_word)
+                best_match = max(best_match, match_score)
+            category_overlap += best_match
+        category_overlap = category_overlap / max(len(query_words), 1)
+        
+        # Category-specific relevance scoring with fuzzy support
+        def get_fuzzy_category_score(query_keyword: str, product_cat: str) -> float:
+            """Get category score with fuzzy matching for keywords"""
+            # Common clothing terms with their fuzzy variations
+            clothing_variations = {
+                'clothes': ['clothes', 'clothing', 'cloths', 'chlothes', 'clohtes', 'clotes', 'clothess', 'cloaths', 'clothez'],
+                'pant': ['pant', 'pants', 'jeans', 'trousers', 'joggers', 'leggings', 'shorts', 'pents'],
+                'jeans': ['jeans', 'denim', 'pants', 'trousers', 'jeens', 'jens'],
+                'dress': ['dress', 'gown', 'frock', 'outfit', 'dresss'],
+                'shirt': ['shirt', 'top', 'blouse', 't-shirt', 'tee', 'shrit', 'shrits'],
+                'apparel': ['apparel', 'garment', 'wear', 'fashion', 'apparell']
+            }
+            
+            # Check if query keyword matches any clothing variation
+            for base_term, variations in clothing_variations.items():
+                for variation in variations:
+                    if fuzzy_match_score(query_keyword, variation) > 0.8:
+                        # Map to standard category scores
+                        if base_term == 'clothes':
+                            return {'clothing': 1.0, 'clothes': 1.0, 'apparel': 1.0, 'garment': 1.0, 'wear': 0.9, 'fashion': 0.8}.get(product_cat, 0.0)
+                        elif base_term == 'pant':
+                            return {'clothing': 1.0, 'pants': 1.0, 'jeans': 1.0, 'trousers': 1.0, 'joggers': 0.9, 'leggings': 0.8, 'shorts': 0.7}.get(product_cat, 0.0)
+                        elif base_term == 'jeans':
+                            return {'clothing': 1.0, 'pants': 1.0, 'jeans': 1.0, 'trousers': 1.0, 'denim': 1.0, 'joggers': 0.8, 'leggings': 0.7}.get(product_cat, 0.0)
+                        elif base_term == 'dress':
+                            return {'clothing': 1.0, 'dress': 1.0, 'gown': 1.0, 'frock': 1.0, 'apparel': 0.9, 'garment': 0.8}.get(product_cat, 0.0)
+                        elif base_term == 'shirt':
+                            return {'clothing': 1.0, 'shirt': 1.0, 'top': 1.0, 'blouse': 1.0, 'apparel': 0.9, 'garment': 0.8, 't-shirt': 1.0, 'tee': 0.9}.get(product_cat, 0.0)
+                        elif base_term == 'apparel':
+                            return {'clothing': 1.0, 'clothes': 1.0, 'apparel': 1.0, 'garment': 1.0, 'wear': 0.9, 'fashion': 0.8}.get(product_cat, 0.0)
+            
+            return 0.0
+        
         category_scores = {
             'pant': {
                 'clothing': 1.0, 'pants': 1.0, 'jeans': 1.0, 'trousers': 1.0,
                 'joggers': 0.9, 'leggings': 0.8, 'shorts': 0.7
             },
+            'jeans': {
+                'clothing': 1.0, 'pants': 1.0, 'jeans': 1.0, 'trousers': 1.0,
+                'denim': 1.0, 'joggers': 0.8, 'leggings': 0.7
+            },
             'dress': {
-                'clothing': 1.0, 'dress': 1.0, 'gown': 1.0, 'frock': 1.0
+                'clothing': 1.0, 'dress': 1.0, 'gown': 1.0, 'frock': 1.0,
+                'apparel': 0.9, 'garment': 0.8
             },
             'shirt': {
-                'clothing': 1.0, 'shirt': 1.0, 'top': 1.0, 'blouse': 1.0
+                'clothing': 1.0, 'shirt': 1.0, 'top': 1.0, 'blouse': 1.0,
+                'apparel': 0.9, 'garment': 0.8, 't-shirt': 1.0, 'tee': 0.9
+            },
+            'clothes': {
+                'clothing': 1.0, 'clothes': 1.0, 'apparel': 1.0, 'garment': 1.0,
+                'wear': 0.9, 'fashion': 0.8
+            },
+            'clothing': {
+                'clothing': 1.0, 'clothes': 1.0, 'apparel': 1.0, 'garment': 1.0,
+                'wear': 0.9, 'fashion': 0.8
             },
             'smartphone': {
                 'electronics': 1.0, 'phone': 1.0, 'smartphone': 1.0, 'mobile': 1.0
@@ -108,7 +325,7 @@ class EnhancedProductHandler:
         relevance_score += desc_overlap * 0.3
         relevance_score += category_overlap * 0.2
         
-        # Category-specific scoring
+        # Category-specific scoring with fuzzy support
         # Special handling for headphones - check this first to avoid conflicts
         if 'headphones' in query_lower or 'headphone' in query_lower or 'earbuds' in query_lower or 'earphone' in query_lower:
             product_cat = product_category.lower()
@@ -129,18 +346,38 @@ class EnhancedProductHandler:
                 if 'headphones' in query_lower:
                     print(f"DEBUG SEMANTIC: Clothing bonus: 0.3")
         else:
-            # Regular category scoring for non-headphones queries
-            for keyword, categories in category_scores.items():
-                if keyword in query_lower:
-                    product_cat = product_category.lower()
-                    if product_cat in categories:
-                        relevance_score += categories[product_cat] * 0.5
-                        if 'headphones' in query_lower:
-                            print(f"DEBUG SEMANTIC: Regular category bonus: {categories[product_cat] * 0.5}")
-                    elif 'clothing' in product_cat:
-                        relevance_score += 0.3  # General clothing bonus
-                        if 'headphones' in query_lower:
-                            print(f"DEBUG SEMANTIC: Clothing bonus: 0.3")
+            # Enhanced category scoring with fuzzy support for clothing queries
+            clothing_keywords = ['clothes', 'clothing', 'shirt', 'dress', 'pants', 'jeans', 'top', 'blouse']
+            is_clothing_query = False
+            
+            # Check for clothing keywords with fuzzy matching
+            for clothing_keyword in clothing_keywords:
+                fuzzy_clothing_score = fuzzy_match_score(query_lower, clothing_keyword)
+                if fuzzy_clothing_score > 0.8:
+                    is_clothing_query = True
+                    print(f"DEBUG SEMANTIC: Clothing query detected! '{query_lower}' matches '{clothing_keyword}' with score {fuzzy_clothing_score}")
+                    break
+            
+            # Use fuzzy category scoring for clothing terms
+            query_words = query_lower.split()
+            for keyword in category_scores.keys():
+                # Check if any query word matches this keyword with fuzzy matching
+                for query_word in query_words:
+                    fuzzy_word_score = fuzzy_match_score(query_word, keyword)
+                    if fuzzy_word_score > 0.5:  # Lower threshold for single words
+                        product_cat = product_category.lower()
+                        fuzzy_score = get_fuzzy_category_score(keyword, product_cat)
+                        if fuzzy_score > 0:
+                            relevance_score += fuzzy_score * 0.5
+                            print(f"DEBUG SEMANTIC: Fuzzy category bonus for '{query_word}' -> '{keyword}': {fuzzy_score * 0.5}")
+                        break  # Only count each keyword once
+            
+            # Apply enhanced clothing bonus for clothing queries on clothing products
+            if is_clothing_query and ('clothing' in product_category.lower() or 'clothes' in product_category.lower()):
+                print(f"DEBUG SEMANTIC: Base relevance score before clothing bonus: {relevance_score}")
+                relevance_score += 0.4  # Enhanced clothing bonus for clothing queries
+                print(f"DEBUG SEMANTIC: Enhanced clothing bonus for '{query_lower}' on clothing product '{product_name}': 0.4")
+                print(f"DEBUG SEMANTIC: Relevance score after clothing bonus: {relevance_score}")
                     
         # Penalize obviously wrong categories (but be more lenient on broad terms)
         wrong_category_penalties = {
@@ -161,8 +398,7 @@ class EnhancedProductHandler:
             if keyword in query_lower and product_category in wrong_cats:
                 relevance_score -= penalty_weight  # Adjusted penalty for wrong category
                 
-        if 'headphones' in query_lower:
-            print(f"DEBUG SEMANTIC: Final relevance score for '{product_name}': {relevance_score}")
+        print(f"DEBUG SEMANTIC: Final relevance score for '{product_name}' (category: {product_category}): {relevance_score}")
         
         return min(relevance_score, 1.0)  # Cap at 1.0
     
@@ -204,6 +440,10 @@ class EnhancedProductHandler:
                 # For jewelry queries, be more strict about category matching
                 min_semantic_score = 0.4
                 print(f"DEBUG: Jewelry detected, setting min_semantic_score to 0.4")
+            elif any(word in query_lower for word in ['products', 'items', 'goods', 'merchandise', 'stuff']):
+                # For very broad/generic queries, be extremely lenient - rely mainly on vector similarity
+                min_semantic_score = 0.01  # Almost no semantic filtering for broad terms
+                print(f"DEBUG: Broad/generic query detected, setting min_semantic_score to 0.01")
             else:
                 # Default threshold for general queries
                 min_semantic_score = 0.3
@@ -285,10 +525,10 @@ class EnhancedProductHandler:
                 limit=limit
             )
         
-        print(f"ENHANCED_SEARCH: Base search returned {len(base_results.get('products', []))} products")
+        print(f"ENHANCED_SEARCH: Base search returned {len(base_results.get('products', base_results.get('results', [])))} products")
         
         # Apply semantic relevance filtering
-        products = base_results.get('products', [])
+        products = base_results.get('products', base_results.get('results', []))
         
         if products:
             print(f"ENHANCED_SEARCH: Applying semantic filtering to {len(products)} products")

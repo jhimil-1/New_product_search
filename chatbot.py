@@ -6,7 +6,6 @@ from datetime import datetime
 from PIL import Image
 import io
 import logging
-import random
 
 from database import MongoDB
 from qdrant_utils import qdrant_manager
@@ -15,6 +14,7 @@ from clip_utils import clip_manager
 from models import ChatResponse, ChatHistoryItem, ChatHistory
 from product_handler import ProductHandler
 from enhanced_product_handler import EnhancedProductHandler
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,195 @@ class ChatbotManager:
         logger.info(f"Found user_id: {user_id} for session: {session_id}")
         return user_id
         
-    def _enrich_products_with_mongodb(self, products: List[Dict]) -> List[Dict]:
+    def _simple_jewelry_search(self, query: str, user_id: str, limit: int = 5) -> List[Dict]:
+        """
+        Simple MongoDB text search for jewelry products (bypasses Qdrant)
+        
+        Args:
+            query: Search query
+            user_id: User ID for filtering
+            limit: Maximum number of results
+            
+        Returns:
+            List of products with relevance scores
+        """
+        try:
+            logger.info(f"Simple jewelry search for: '{query}' (user: {user_id})")
+            
+            # Create text search query
+            search_query = {
+                "$and": [
+                    {"$text": {"$search": query}},
+                    {"created_by": user_id}
+                ]
+            }
+            
+            # Execute text search with relevance scoring
+            products = list(
+                self.products_collection
+                .find(search_query)
+                .sort([("score", {"$meta": "textScore"})])
+                .limit(limit * 2)  # Get more to filter
+            )
+            
+            if not products:
+                logger.info("No text search results, trying regex search")
+                # Fallback to regex search
+                regex_query = {
+                    "$and": [
+                        {"$or": [
+                            {"name": {"$regex": query, "$options": "i"}},
+                            {"description": {"$regex": query, "$options": "i"}}
+                        ]},
+                        {"created_by": user_id}
+                    ]
+                }
+                products = list(self.products_collection.find(regex_query).limit(limit * 2))
+            
+            # Filter for jewelry products and calculate relevance scores
+            jewelry_products = []
+            jewelry_keywords = ['jewelry', 'jewellery', 'earrings', 'necklace', 'bracelet', 'ring', 'pendant', 'chain', 'watch', 'jewel', 'gold', 'silver', 'diamond', 'pearl', 'sapphire', 'emerald', 'ruby']
+            
+            for product in products:
+                # Check if it's jewelry
+                name_lower = product.get('name', '').lower()
+                desc_lower = product.get('description', '').lower()
+                category_lower = product.get('category', '').lower()
+                
+                is_jewelry = any(keyword in name_lower or keyword in desc_lower or keyword in category_lower for keyword in jewelry_keywords)
+                
+                if is_jewelry:
+                    # Calculate relevance score based on matches
+                    score = 0.0
+                    query_lower = query.lower()
+                    
+                    # Exact name match
+                    if query_lower in name_lower:
+                        score += 0.8
+                    
+                    # Word overlap
+                    query_words = set(query_lower.split())
+                    name_words = set(name_lower.split())
+                    desc_words = set(desc_lower.split())
+                    
+                    word_matches = len(query_words.intersection(name_words)) * 0.3
+                    desc_matches = len(query_words.intersection(desc_words)) * 0.2
+                    score += word_matches + desc_matches
+                    
+                    # Category bonus
+                    if any(keyword in category_lower for keyword in jewelry_keywords):
+                        score += 0.1
+                    
+                    # Ensure minimum score
+                    score = max(0.1, min(1.0, score))
+                    
+                    # Format product for response
+                    formatted_product = {
+                        'product_id': str(product.get('_id', '')),
+                        'name': product.get('name', ''),
+                        'description': product.get('description', ''),
+                        'price': product.get('price', 0.0),
+                        'category': product.get('category', ''),
+                        'image_url': product.get('image_url', ''),
+                        'image_path': product.get('image_path', ''),
+                        'score': score,
+                        'in_stock': product.get('in_stock', True),
+                        'created_by': product.get('created_by', user_id)
+                    }
+                    
+                    jewelry_products.append(formatted_product)
+            
+            # Sort by score and limit results
+            jewelry_products.sort(key=lambda x: x['score'], reverse=True)
+            final_results = jewelry_products[:limit]
+            
+            logger.info(f"Simple jewelry search found {len(final_results)} products")
+            return final_results
+            
+        except Exception as e:
+            logger.error(f"Simple jewelry search failed: {str(e)}")
+            return []
+
+    def _generate_jewelry_response(self, products: List[Dict], original_query: str) -> str:
+        """
+        Generate a natural language response for jewelry products
+        
+        Args:
+            products: List of jewelry products
+            original_query: Original user query
+            
+        Returns:
+            Natural language response
+        """
+        if not products:
+            return f"I couldn't find any jewelry matching '{original_query}'. Please try a different search term."
+        
+        # Create a personalized response based on the query and products
+        query_lower = original_query.lower()
+        
+        # Determine response type based on query
+        if 'earrings' in query_lower:
+            response_intro = f"I found some beautiful earrings matching '{original_query}':"
+        elif 'necklace' in query_lower:
+            response_intro = f"Here are some elegant necklaces matching '{original_query}':"
+        elif 'bracelet' in query_lower:
+            response_intro = f"I found these lovely bracelets matching '{original_query}':"
+        elif 'ring' in query_lower:
+            response_intro = f"Here are some stunning rings matching '{original_query}':"
+        elif 'watch' in query_lower:
+            response_intro = f"I found these stylish watches matching '{original_query}':"
+        elif any(word in query_lower for word in ['gold', 'silver', 'diamond', 'pearl']):
+            response_intro = f"I found these beautiful jewelry pieces matching '{original_query}':"
+        else:
+            response_intro = f"I found these jewelry items matching '{original_query}':"
+        
+        # Add product highlights
+        highlights = []
+        for i, product in enumerate(products[:3]):  # Top 3 products
+            name = product.get('name', 'Unknown')
+            price = product.get('price', 0)
+            category = product.get('category', 'jewelry')
+            
+            # Format price
+            if price > 0:
+                price_str = f"${price:.2f}"
+            else:
+                price_str = "Price not available"
+            
+            highlights.append(f"• {name} ({price_str})")
+        
+        # Combine response
+        response = response_intro + "\n" + "\n".join(highlights)
+        
+        # Add closing based on number of results
+        if len(products) > 3:
+            response += f"\n\nAnd {len(products) - 3} more beautiful pieces!"
+        
+        return response
+
+    def _is_jewelry_query(self, query: str, category: Optional[str] = None) -> bool:
+        """
+        Check if a query is jewelry-related
+        
+        Args:
+            query: User's search query
+            category: Optional category hint
+            
+        Returns:
+            True if this is a jewelry query
+        """
+        query_lower = query.lower()
+        jewelry_keywords = ['jewelry', 'jewellery', 'earrings', 'necklace', 'bracelet', 'ring', 'pendant', 'chain', 'watch', 'jewel', 'gold', 'silver', 'diamond', 'pearl', 'sapphire', 'emerald', 'ruby']
+        
+        # Check if query contains jewelry terms
+        is_jewelry_query = any(keyword in query_lower for keyword in jewelry_keywords)
+        
+        # Check if category is jewelry
+        is_jewelry_category = category and category.lower() in ['jewelry', 'jewellery', 'earrings', 'necklaces', 'bracelets', 'rings']
+        
+        return is_jewelry_query or is_jewelry_category
+
+    def _enrich_products_with_mongodb(self, products):
         """
         Enrich products with full data from MongoDB
         
@@ -208,72 +396,38 @@ class ChatbotManager:
     async def handle_text_query(
         self, 
         session_id: str, 
-        query: str,
+        query: str, 
         category: Optional[str] = None,
-        limit: int = 5
+        limit: int = 10
     ) -> ChatResponse:
         """
-        Handle text-based query
+        Handle text-based query with hybrid search approach
         
         Args:
             session_id: Session identifier
-            query: User's text query
+            query: User's search query
+            category: Optional product category
+            limit: Maximum number of products to return
             
         Returns:
             Chat response with products
         """
         try:
-            logger.info(f"Processing text query for session: {session_id}")
-            
             # Verify session
-            logger.info(f"Verifying session: {session_id}")
             if not self._verify_session(session_id):
-                logger.error(f"Invalid session ID: {session_id}")
                 raise ValueError("Invalid session ID")
             
             # Get user ID for filtering
-            logger.info(f"Getting user from session: {session_id}")
             user_id = self._get_user_from_session(session_id)
+            
+            # Initialize products list to avoid NameError
+            products = []
             if not user_id:
                 logger.error(f"No user found for session: {session_id}")
                 raise ValueError("Invalid user session")
             
             logger.info(f"Found user ID: {user_id} for session: {session_id}")
-
-            # Check if this is a simple greeting
-            query_lower = query.lower().strip()
-            greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening']
-            is_greeting = any(greeting in query_lower for greeting in greetings) or query_lower in greetings
-
-            if is_greeting:
-                # Save user message
-                self._save_chat_message(session_id, "user", query)
-                
-                # Get chat history to determine if this is first message
-                chat_history = self._get_chat_history(session_id)
-                
-                # Choose appropriate greeting based on chat history
-                if len(chat_history) <= 1:  # First message after welcome
-                    response_text = "Hello! I'm your personal jewellery assistant. How can I help you today?"
-                else:
-                    response_texts = [
-                        "Hello again! How can I assist you with your jewellery needs today?",
-                        "Hi there! What kind of jewellery are you looking for?",
-                        "Welcome back! How can I help you find the perfect jewellery today?"
-                    ]
-                    response_text = random.choice(response_texts)
-                
-                # Save and return the response
-                self._save_chat_message(session_id, "assistant", response_text)
-                return ChatResponse(
-                    session_id=session_id,
-                    query=query,
-                    response=response_text,
-                    products=[],
-                    timestamp=datetime.utcnow()
-                )
             
-            # For non-greeting queries, proceed with the normal flow
             # Save user message
             logger.debug(f"Saving user message: {query}")
             self._save_chat_message(session_id, "user", query)
@@ -317,7 +471,7 @@ class ChatbotManager:
                             # Look for product mentions in user messages
                             user_content = message['content'].lower()
                             # Common product-related keywords
-                            product_keywords = ['ring', 'necklace', 'earring', 'bracelet', 'jewelry', 'gold', 'silver', 'diamond']
+                            product_keywords = ['phone', 'smartphone', 'jewelry', 'ring', 'necklace', 'watch', 'laptop', 'tablet']
                             for keyword in product_keywords:
                                 if keyword in user_content:
                                     search_query = keyword
@@ -329,52 +483,218 @@ class ChatbotManager:
             # Search for similar products
             logger.debug(f"Searching for products with query: '{search_query}' (original: '{query}')")
             try:
-                # Use enhanced product handler for better relevance
-                logger.info(f"Calling enhanced_handler.search_products_enhanced with query='{search_query}', user_id='{user_id}', category='{category}', limit={limit}")
-                search_result = await self.enhanced_handler.search_products_enhanced(
-                    query=search_query,
-                    user_id=user_id,
-                    category=category,
-                    limit=limit
-                )
+                # Get search embedding
+                search_embedding = clip_manager.get_text_embedding(search_query)
                 
-                logger.info(f"Enhanced handler returned: {search_result}")
-                if search_result['status'] == 'success':
-                    products = search_result['results']
-                    logger.info(f"Found {len(products)} enhanced products")
-                else:
-                    logger.error(f"Enhanced search failed: {search_result['message']}")
-                    # Fallback to original handler
-                    logger.info("Falling back to enhanced product handler")
-                    fallback_result = await self.enhanced_handler.search_products(
-                        query=search_query,
-                        user_id=user_id,
-                        category=category,
-                        limit=limit
-                    )
-                    if fallback_result['status'] == 'success':
-                        products = fallback_result['results']
-                        logger.info(f"Found {len(products)} fallback products")
+                # Enhanced category detection with comprehensive keywords
+                detected_category = category
+                query_lower = query.lower()
+                
+                # Comprehensive category detection
+                category_keywords = {
+                    'jewelry': ['jewelry', 'jewellery', 'earrings', 'necklace', 'bracelet', 'ring', 'pendant', 'chain', 'watch', 'jewel'],
+                    'electronics': ['electronics', 'phone', 'smartphone', 'laptop', 'headphones', 'earbuds', 'computer', 'tablet', 'camera', 'speaker', 'tv', 'monitor', 'mobile'],
+                    'clothing': ['shirt', 'tshirt', 't-shirt', 'pants', 'jeans', 'dress', 'skirt', 'jacket', 'coat', 'sweater', 'hoodie', 'clothing', 'clothes', 'shoes', 'boots', 'sneakers', 'apparel'],
+                    'home': ['home', 'furniture', 'chair', 'table', 'sofa', 'bed', 'lamp', 'decor', 'household'],
+                    'kitchen': ['kitchen', 'cooking', 'utensils', 'appliances', 'refrigerator', 'microwave', 'blender', 'cookware']
+                }
+                
+                # Detect category if not provided
+                if not detected_category:
+                    for category, keywords in category_keywords.items():
+                        if any(keyword in query_lower for keyword in keywords):
+                            detected_category = category
+                            logger.info(f"Detected category '{category}' from query: '{query}'")
+                            break
+                
+                # Check if this is a jewelry query - use both simple MongoDB and Qdrant for best results
+                if self._is_jewelry_query(query, detected_category):
+                    logger.info("Detected jewelry query - using hybrid approach (MongoDB + Qdrant)")
+                    
+                    # First try simple MongoDB search for fast, reliable results
+                    simple_products = self._simple_jewelry_search(query, user_id, limit * 2)
+                    
+                    # Also try Qdrant search for enhanced semantic matching
+                    try:
+                        qdrant_products = qdrant_manager.search_similar_products(
+                            query_embedding=search_embedding,
+                            user_id=user_id,
+                            category_filter=detected_category,
+                            limit=limit * 2,
+                            min_score=0.4  # Lower threshold for jewelry to get more variety
+                        )
+                        
+                        if qdrant_products:
+                            qdrant_products = self._enrich_products_with_mongodb(qdrant_products)
+                            logger.info(f"Qdrant jewelry search found {len(qdrant_products)} products")
+                        else:
+                            qdrant_products = []
+                    except Exception as e:
+                        logger.warning(f"Qdrant search failed for jewelry: {str(e)}")
+                        qdrant_products = []
+                    
+                    # Combine results: prioritize simple search results, enhance with Qdrant if available
+                    if simple_products:
+                        products = simple_products
+                        logger.info(f"Using simple MongoDB results ({len(products)} products)")
+                        
+                        # If we have Qdrant results too, merge them intelligently
+                        if qdrant_products:
+                            # Add unique Qdrant results that aren't in simple results
+                            simple_ids = {p['product_id'] for p in simple_products}
+                            additional_products = [p for p in qdrant_products if p['product_id'] not in simple_ids]
+                            
+                            if additional_products:
+                                # Take top additional products and merge
+                                additional_products = additional_products[:max(1, limit - len(simple_products))]
+                                products.extend(additional_products)
+                                logger.info(f"Added {len(additional_products)} unique Qdrant results")
+                    
+                    elif qdrant_products:
+                        # No simple results, use Qdrant results
+                        products = qdrant_products
+                        logger.info(f"Using Qdrant results only ({len(products)} products)")
+                    
                     else:
                         products = []
+                    
+                    if products:
+                        # Sort by score and limit results
+                        products.sort(key=lambda x: x.get('score', 0), reverse=True)
+                        products = products[:limit]
+                        
+                        logger.info(f"Hybrid jewelry search final result: {len(products)} products")
+                        # Generate natural language response for jewelry products
+                        response_text = self._generate_jewelry_response(products, query)
+                        
+                        # Save assistant message
+                        self._save_chat_message(session_id, "assistant", response_text, products)
+                        
+                        return ChatResponse(
+                            response=response_text,
+                            products=products,
+                            session_id=session_id,
+                            success=True
+                        )
+                    else:
+                        logger.info("No jewelry products found with hybrid search, continuing with standard Qdrant")
+                        products = []  # Fall through to standard Qdrant search
                 
-            except Exception as e:
-                logger.error(f"Error searching products: {str(e)}")
-                # Fallback to direct Qdrant search if product handler fails
-                try:
-                    # Generate embedding for the search query (which might be different from original query)
-                    search_embedding = clip_manager.get_text_embedding(search_query)
+                # PRIORITY 1: Try enhanced search with category filtering first (if category detected)
+                if not products and detected_category:
+                    logger.info(f"Attempting category-specific enhanced search for '{detected_category}'")
+                    
+                    enhanced_results = await self.enhanced_handler.search_products_enhanced(
+                        query=search_query,
+                        user_id=user_id,
+                        category=detected_category,
+                        min_relevance_score=0.5,  # Higher threshold for category-specific search
+                        limit=limit * 2
+                    )
+                    
+                    if enhanced_results and enhanced_results.get('products'):
+                        products = enhanced_results['products']
+                        logger.info(f"Category-specific search found {len(products)} products")
+                        
+                        # Verify results are from the correct category
+                        valid_products = []
+                        for product in products:
+                            if product.get('category', '').lower() == detected_category.lower():
+                                # Set similarity score from semantic relevance
+                                product['score'] = product.get('search_metadata', {}).get('semantic_relevance_score', 0.7)
+                                valid_products.append(product)
+                        
+                        if valid_products:
+                            logger.info(f"Found {len(valid_products)} valid products in correct category")
+                            # Sort by score and limit
+                            valid_products.sort(key=lambda x: x.get('score', 0), reverse=True)
+                            products = valid_products[:limit]
+                        else:
+                            logger.info("No valid products found in correct category, falling back to CLIP search")
+                            products = []
+                    else:
+                        logger.info("No results from category-specific enhanced search")
+                        products = []
+                
+                # PRIORITY 2: If no category-specific results, use CLIP similarity search
+                if not products:
+                    logger.info("Using CLIP similarity search")
+                    
+                    # First try with higher score threshold for better precision
                     products = qdrant_manager.search_similar_products(
                         query_embedding=search_embedding,
                         user_id=user_id,
-                        category_filter=category,
-                        limit=limit
+                        category_filter=detected_category,
+                        limit=limit * 2,  # Get more results for better filtering
+                        min_score=0.65  # Increased threshold for more relevant results
                     )
-                    products = self._enrich_products_with_mongodb(products)
-                    logger.info(f"Fallback: Found {len(products)} products from direct Qdrant search")
-                except Exception as fallback_error:
-                    logger.error(f"Fallback search also failed: {str(fallback_error)}")
-                    products = []  # Continue with empty product list
+                    
+                    # If no results, try with a medium threshold
+                    if not products:
+                        logger.info("No results with strict filter, trying with medium threshold")
+                        products = qdrant_manager.search_similar_products(
+                            query_embedding=search_embedding,
+                            user_id=user_id,
+                            category_filter=detected_category,
+                            limit=limit * 2,
+                            min_score=0.5
+                        )
+                    
+                    # Enrich products with MongoDB data if found
+                    if products:
+                        products = self._enrich_products_with_mongodb(products)
+                        
+                        # Boost scores for products that match the query category
+                        if detected_category:
+                            for product in products:
+                                product_category = product.get('category', '').lower()
+                                if product_category == detected_category.lower():
+                                    # Boost score for category match
+                                    if 'score' in product:
+                                        product['score'] = min(1.0, product['score'] * 1.3)  # 30% boost, capped at 1.0
+                        
+                        # Sort by relevance score if available
+                        if all('score' in p for p in products):
+                            products.sort(key=lambda x: x.get('score', 0), reverse=True)
+                        
+                        # Apply minimum threshold to final results
+                        products = [p for p in products if p.get('score', 0) >= 0.6]
+                        
+                        # Limit to requested number of results
+                        products = products[:limit]
+                
+                # If still no results, try the enhanced product handler as last resort
+                if not products:
+                    logger.info(f"Using enhanced product handler as fallback for query: '{search_query}'")
+                    search_result = await self.enhanced_handler.search_products_enhanced(
+                        query=search_query,
+                        user_id=user_id,
+                        category=detected_category,
+                        limit=limit,
+                        min_relevance_score=0.4  # Set minimum relevance score for fallback
+                    )
+                    
+                    if search_result and search_result.get('products'):
+                        products = search_result['products']
+                        logger.info(f"Found {len(products)} enhanced products")
+                
+            except Exception as e:
+                    logger.error(f"Error searching products: {str(e)}")
+                    # Fallback to direct Qdrant search if product handler fails
+                    try:
+                        # Generate embedding for the search query (which might be different from original query)
+                        search_embedding = clip_manager.get_text_embedding(search_query)
+                        products = qdrant_manager.search_similar_products(
+                            query_embedding=search_embedding,
+                            user_id=user_id,
+                            category_filter=detected_category,
+                            limit=limit
+                        )
+                        products = self._enrich_products_with_mongodb(products)
+                        logger.info(f"Fallback: Found {len(products)} products from direct Qdrant search")
+                    except Exception as fallback_error:
+                        logger.error(f"Fallback search also failed: {str(fallback_error)}")
+                        products = []  # Continue with empty product list
             
             # Get chat history
             chat_history = self._get_chat_history(session_id)
@@ -439,56 +759,130 @@ class ChatbotManager:
             # Get user ID for filtering
             user_id = self._get_user_from_session(session_id)
             
-            # Check if this is a necklace search
-            is_necklace_search = False
-            if query and any(term in query.lower() for term in ["necklace", "necklaces", "pendant", "chain"]):
-                is_necklace_search = True
-                category = "necklaces"
-                logger.info(f"Detected necklace search from query: '{query}', setting category to 'necklaces'")
-            elif category and category.lower() == "necklaces":
-                is_necklace_search = True
-                logger.info(f"Explicit necklace category search")
+            # Enhanced category detection for image queries
+            detected_category = category
+            query_lower = query.lower() if query else ""
+            
+            # Comprehensive category detection for image queries
+            image_category_keywords = {
+                'jewelry': ['jewelry', 'jewellery', 'earrings', 'necklace', 'bracelet', 'ring', 'pendant', 'chain', 'watch', 'jewel', 'gold', 'silver', 'diamond'],
+                'electronics': ['electronics', 'phone', 'smartphone', 'laptop', 'headphones', 'earbuds', 'computer', 'tablet', 'camera', 'speaker', 'tv', 'monitor', 'mobile', 'tech'],
+                'clothing': ['shirt', 'tshirt', 't-shirt', 'pants', 'jeans', 'dress', 'skirt', 'jacket', 'coat', 'sweater', 'hoodie', 'clothing', 'clothes', 'shoes', 'boots', 'sneakers', 'apparel', 'fashion'],
+                'home': ['home', 'furniture', 'chair', 'table', 'sofa', 'bed', 'lamp', 'decor', 'household', 'interior'],
+                'kitchen': ['kitchen', 'cooking', 'utensils', 'appliances', 'refrigerator', 'microwave', 'blender', 'cookware', 'food']
+            }
+            
+            # Detect category from query if not provided
+            if not detected_category and query:
+                for category, keywords in image_category_keywords.items():
+                    if any(keyword in query_lower for keyword in keywords):
+                        detected_category = category
+                        logger.info(f"Detected category '{category}' from image query: '{query}'")
+                        break
             
             # Open image
             image = Image.open(io.BytesIO(image_bytes))
             
             # Save user message
-            search_type = "necklace image search" if is_necklace_search else "image search"
+            search_type = f"{detected_category or 'general'} image search" if detected_category else "image search"
             user_message = f"{query} [{search_type}]"
             self._save_chat_message(session_id, "user", user_message)
             
+            # PRIORITY 1: Try enhanced image search with category filtering first
+            if detected_category:
+                logger.info(f"Attempting category-specific image search for '{detected_category}'")
+                
+                enhanced_results = await self.enhanced_handler.search_products(
+                    query=query or f"{detected_category} product",
+                    user_id=user_id,
+                    category=detected_category,
+                    min_relevance_score=0.4,
+                    limit=limit * 2,
+                    search_type="image",
+                    image_data=image_bytes,
+                    min_semantic_score=0.3
+                )
+                
+                if enhanced_results and enhanced_results.get('products'):
+                    products = enhanced_results['products']
+                    logger.info(f"Category-specific image search found {len(products)} products")
+                    
+                    # Verify results are from the correct category
+                    valid_products = []
+                    for product in products:
+                        if product.get('category', '').lower() == detected_category.lower():
+                            product['score'] = product.get('search_metadata', {}).get('semantic_relevance_score', 0.6)
+                            valid_products.append(product)
+                    
+                    if valid_products:
+                        valid_products.sort(key=lambda x: x.get('score', 0), reverse=True)
+                        products = valid_products[:limit]
+                        
+                        # Generate success response
+                        response_text = f"I found {len(products)} {detected_category} items that match your image:"
+                        
+                        # Save and return response
+                        self._save_chat_message(session_id, "assistant", response_text, products)
+                        
+                        return ChatResponse(
+                            session_id=session_id,
+                            query=user_message,
+                            response=response_text,
+                            products=products,
+                            timestamp=datetime.utcnow()
+                        )
+            
+            # PRIORITY 2: If no category-specific results, use CLIP image similarity search
+            logger.info("Using CLIP image similarity search")
+            
             # Get query embedding using CLIP for image and text
-            text_embedding = clip_manager.get_text_embedding(query)
+            text_embedding = clip_manager.get_text_embedding(query or "product")
             image_embedding = clip_manager.get_image_embedding(image)
             
-            # Combine embeddings (70% text, 30% image for jewelry)
+            # Combine embeddings (60% text, 40% image for better accuracy)
             query_embedding = [
-                0.7 * t + 0.3 * i
+                0.6 * t + 0.4 * i
                 for t, i in zip(text_embedding, image_embedding)
             ]
             
-            # Search for similar products
+            # Try with category filter if detected
             products = qdrant_manager.search_similar_products(
                 query_embedding=query_embedding,
                 user_id=user_id,
-                category_filter=category,
-                limit=5
+                category_filter=detected_category,
+                limit=limit * 2,
+                min_score=0.4
             )
             
-            # Enrich products with MongoDB data (descriptions, full image URLs, etc.)
-            products = self._enrich_products_with_mongodb(products)
+            # If no results, try without category filter
+            if not products and detected_category:
+                logger.info("No results with category filter, trying without category filter")
+                products = qdrant_manager.search_similar_products(
+                    query_embedding=query_embedding,
+                    user_id=user_id,
+                    limit=limit * 2,
+                    min_score=0.3
+                )
             
-            # Get chat history
-            chat_history = self._get_chat_history(session_id)
+            # Enrich products with MongoDB data
+            if products:
+                products = self._enrich_products_with_mongodb(products)
+                
+                # Sort by relevance score
+                if all('score' in p for p in products):
+                    products.sort(key=lambda x: x.get('score', 0), reverse=True)
+                
+                # Limit to top results
+                products = products[:limit]
             
-            # Generate natural language response
-            response_text = gemini_manager.generate_response(
-                query=f"{query} (based on uploaded image)",
-                products=products,
-                chat_history=chat_history
-            )
+            # Generate response
+            if products:
+                category_text = detected_category if detected_category else "product"
+                response_text = f"I found {len(products)} {category_text} items that match your image:"
+            else:
+                response_text = "I couldn't find any matching products for your image. Please try a different image or provide more details."
             
-            # Save assistant response
+            # Save and return response
             self._save_chat_message(session_id, "assistant", response_text, products)
             
             return ChatResponse(

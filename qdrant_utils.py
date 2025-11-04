@@ -167,17 +167,62 @@ class QdrantManager:
                         logger.info(f"Found results using case variation: {variation}")
                         break
             
-            return [
-                {
-                    "id": hit.payload.get("mongo_id", str(hit.id)),  # Return original MongoDB ID if available
-                    "score": hit.score,
-                    "payload": hit.payload
-                }
-                for hit in search_results
-            ]
+            results = []
+            for hit in search_results:
+                try:
+                    # Skip results without required fields
+                    if not hit.payload:
+                        continue
+                        
+                    # Get product ID, preferring mongo_id if available
+                    product_id = hit.payload.get("mongo_id") or str(hit.id)
+                    if not product_id:
+                        continue
+                    
+                    # Get product's jewelry type if available
+                    product_jewelry_type = hit.payload.get("jewelry_type", "").lower()
+                    
+                    # Calculate base relevance score (inverted distance, higher is better)
+                    # Scale to 0-1 range where 1 is perfect match
+                    relevance_score = float(hit.score) if hit.score is not None else 0.0
+                    
+                    # Boost score for exact matches on important fields
+                    if category_filter and hit.payload.get("category", "").lower() == category_filter.lower():
+                        relevance_score = min(1.0, relevance_score * 1.1)  # 10% boost for exact category match
+                    
+                    # Boost score for exact jewelry type matches
+                    if product_jewelry_type:
+                        relevance_score = min(1.0, relevance_score * 1.2)  # 20% boost for exact jewelry type match
+                    
+                    result = {
+                        "id": product_id,
+                        "score": float(hit.score) if hit.score is not None else 0.0,
+                        "relevance_score": relevance_score,
+                        "payload": hit.payload
+                    }
+                    
+                    # Add any additional fields from payload
+                    for field in ["name", "description", "category", "jewelry_type", "image_url"]:
+                        if field in hit.payload:
+                            result[field] = hit.payload[field]
+                    
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Error processing search result: {str(e)}", exc_info=True)
+                    continue
+            
+            # Sort by relevance score (highest first)
+            results.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+            
+            # Limit results after all processing
+            results = results[:limit]
+            
+            logger.info(f"Found {len(results)} matching products")
+            return results
+            
         except Exception as e:
-            logger.error(f"Error searching in Qdrant: {str(e)}")
-            # Return empty results instead of raising
+            logger.error(f"Error in search_similar: {str(e)}", exc_info=True)
+            # Return empty list instead of raising to prevent breaking the search
             return []
     
     def search_similar_products(
@@ -185,6 +230,7 @@ class QdrantManager:
         query_embedding: List[float], 
         user_id: Optional[str] = None,
         category_filter: Optional[str] = None,
+        jewelry_type: Optional[str] = None,
         limit: int = 10,  # Increased default limit
         min_score: float = 0.05  # Lowered minimum score threshold for better recall
     ) -> List[Dict[str, Any]]:
@@ -195,6 +241,7 @@ class QdrantManager:
             query_embedding: Query vector embedding
             user_id: Optional user ID to filter results (username)
             category_filter: Optional category to filter results
+            jewelry_type: Optional jewelry type to filter by (e.g., 'ring', 'necklace')
             limit: Maximum number of results
             min_score: Minimum similarity score threshold
             
@@ -205,7 +252,8 @@ class QdrantManager:
             # Build filter for user-specific and category search
             query_filter = None
             filter_conditions = []
-            category_should_conditions = []  # Initialize category should conditions
+            category_should_conditions = []
+            jewelry_type_conditions = []
             
             # Only filter by user_id if provided, but don't make it required
             if user_id:
@@ -271,8 +319,43 @@ class QdrantManager:
                     logger.warning(f"Error filtering by category: {str(e)} - falling back to all categories")
                     # Continue without category filter if there's an error
             
+            # Add jewelry type filter if specified
+            if jewelry_type:
+                try:
+                    # Create payload index for jewelry_type if it doesn't exist
+                    try:
+                        self.client.create_payload_index(
+                            collection_name=self.collection_name,
+                            field_name="jewelry_type",
+                            field_schema=models.PayloadSchemaType.KEYWORD
+                        )
+                        logger.info("Created payload index for 'jewelry_type' field")
+                    except Exception as e:
+                        logger.debug(f"Payload index for 'jewelry_type' already exists or error: {str(e)}")
+                    
+                    # Add jewelry type filter - try exact match first, then case variations
+                    jewelry_variations = [
+                        jewelry_type,                    # Original
+                        jewelry_type.lower(),           # lowercase
+                        jewelry_type.capitalize(),      # Capitalized
+                        jewelry_type.upper()            # UPPERCASE
+                    ]
+                    
+                    # Add jewelry type conditions
+                    for variation in jewelry_variations:
+                        jewelry_type_conditions.append(
+                            models.FieldCondition(
+                                key="jewelry_type",
+                                match=models.MatchValue(value=variation)
+                            )
+                        )
+                    
+                    logger.info(f"Filtering by jewelry type: {jewelry_type}")
+                except Exception as e:
+                    logger.warning(f"Error filtering by jewelry type: {str(e)} - falling back to all types")
+            
             # Build final filter combining must and should conditions
-            if filter_conditions or category_should_conditions:
+            if filter_conditions or category_should_conditions or jewelry_type_conditions:
                 all_must_conditions = []
                 
                 # Add user_id filter conditions if they exist
@@ -288,6 +371,18 @@ class QdrantManager:
                         models.FieldCondition(
                             key="category",
                             match=models.MatchAny(any=category_values)
+                        )
+                    )
+                
+                # Add jewelry type conditions if they exist
+                if jewelry_type_conditions:
+                    # For jewelry_type, we need to use should conditions within a must clause
+                    # to match any of the jewelry type variations
+                    jewelry_values = [condition.match.value for condition in jewelry_type_conditions]
+                    all_must_conditions.append(
+                        models.FieldCondition(
+                            key="jewelry_type",
+                            match=models.MatchAny(any=jewelry_values)
                         )
                     )
                 
@@ -313,8 +408,69 @@ class QdrantManager:
                 # If no results with filters and user_id is provided, try with only user_id filter
                 if not search_results and query_filter is not None:
                     if user_id and category_filter:
-                        # Try with only user_id filter first
-                        logger.info("No results with both filters, trying with only user_id filter")
+                        # Try with only user_id filter but maintain category filter with lower threshold
+                        logger.info("No results with strict threshold, trying with lower threshold but keeping category filter")
+                        category_values = [category_filter, category_filter.lower(), category_filter.capitalize(), category_filter.upper()]
+                        combined_filter = models.Filter(
+                            must=[
+                                models.FieldCondition(
+                                    key="created_by",
+                                    match=models.MatchValue(value=user_id)
+                                ),
+                                models.FieldCondition(
+                                    key="category",
+                                    match=models.MatchAny(any=category_values)
+                                )
+                            ]
+                        )
+                        search_results = self.client.search(
+                            collection_name=self.collection_name,
+                            query_vector=query_embedding,
+                            query_filter=combined_filter,
+                            limit=limit,
+                            score_threshold=min_score * 0.7,  # Lower threshold but keep category filter
+                            with_payload=True,
+                            with_vectors=False
+                        )
+                    
+                    # If still no results, try with only category filter (no user filter)
+                    if not search_results and category_filter:
+                        logger.info("No results with user and category filter, trying with only category filter")
+                        # Try with more variations of category names to handle potential mismatches
+                        category_values = [
+                            category_filter, 
+                            category_filter.lower(), 
+                            category_filter.capitalize(), 
+                            category_filter.upper(),
+                            # Add common category variations
+                            "clothing" if category_filter.lower() == "clothes" else ("clothes" if category_filter.lower() == "clothing" else ""),
+                            "jewellery" if category_filter.lower() == "jewelry" else ("jewelry" if category_filter.lower() == "jewellery" else ""),
+                            "electronic" if category_filter.lower() == "electronics" else ("electronics" if category_filter.lower() == "electronic" else "")
+                        ]
+                        # Remove empty strings
+                        category_values = [v for v in category_values if v]
+                        
+                        category_only_filter = models.Filter(
+                            must=[
+                                models.FieldCondition(
+                                    key="category",
+                                    match=models.MatchAny(any=category_values)
+                                )
+                            ]
+                        )
+                        search_results = self.client.search(
+                            collection_name=self.collection_name,
+                            query_vector=query_embedding,
+                            query_filter=category_only_filter,
+                            limit=limit,
+                            score_threshold=min_score * 0.5,  # Lower threshold further to find more results
+                            with_payload=True,
+                            with_vectors=False
+                        )
+                        
+                    # Only if all category-based searches fail, try with just user filter
+                    if not search_results and user_id:
+                        logger.info("No results with category filter, trying with only user_id filter")
                         user_filter = models.Filter(
                             must=[
                                 models.FieldCondition(
@@ -328,24 +484,10 @@ class QdrantManager:
                             query_vector=query_embedding,
                             query_filter=user_filter,
                             limit=limit,
-                            score_threshold=min_score * 0.8,  # Slightly lower threshold
+                            score_threshold=min_score * 0.8,
                             with_payload=True,
                             with_vectors=False
                         )
-                    
-                    # If still no results, try searching without any filters
-                    if not search_results:
-                        logger.info("No results found with current filters, trying without filters")
-                        search_results = self.client.search(
-                            collection_name=self.collection_name,
-                            query_vector=query_embedding,
-                            limit=limit,
-                            score_threshold=min_score * 0.8,  # Slightly lower threshold
-                            with_payload=True,
-                            with_vectors=False
-                        )
-                        if search_results:
-                            logger.info(f"Found {len(search_results)} results without filters")
             except Exception as e:
                 logger.error(f"Error during search: {str(e)}")
                 # Return empty results instead of falling back to unfiltered search
