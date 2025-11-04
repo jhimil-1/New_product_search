@@ -1,67 +1,244 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Simple Page</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PurpleMart – Shop Smart</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background-color: #f4f6f8;
-      color: #333;
+    * {
       margin: 0;
       padding: 0;
+      box-sizing: border-box;
+      font-family: "Poppins", sans-serif;
+    }
+
+    body {
+      background-color: #f8f6ff;
+      color: #333;
+    }
+
+    /* Navbar */
+    nav {
+      background: linear-gradient(90deg, #6a0dad, #9b59b6);
+      color: white;
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
+    }
+
+    nav h1 {
+      font-size: 1.6rem;
+      letter-spacing: 1px;
+    }
+
+    nav ul {
+      display: flex;
+      list-style: none;
+      gap: 2rem;
+    }
+
+    nav ul li {
+      cursor: pointer;
+      transition: 0.3s;
+    }
+
+    nav ul li:hover {
+      color: #ffccff;
+    }
+
+    /* Hero Section */
+    .hero {
+      background: linear-gradient(120deg, #a66cff, #8a2be2);
+      color: white;
+      text-align: center;
+      padding: 5rem 2rem;
+    }
+
+    .hero h2 {
+      font-size: 2.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .hero p {
+      font-size: 1.1rem;
+      margin-bottom: 2rem;
+    }
+
+    .hero button {
+      background-color: white;
+      color: #6a0dad;
+      border: none;
+      padding: 0.8rem 1.8rem;
+      border-radius: 30px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+
+    .hero button:hover {
+      background-color: #ffccff;
+      color: #4b0082;
+    }
+
+    /* Product Section */
+    .products {
+      padding: 4rem 2rem;
       text-align: center;
     }
-    header {
-      background-color: #0078d7;
+
+    .products h3 {
+      font-size: 2rem;
+      color: #6a0dad;
+      margin-bottom: 2rem;
+    }
+
+    .product-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 2rem;
+      max-width: 1100px;
+      margin: auto;
+    }
+
+    .product-card {
+      background-color: #fff;
+      border-radius: 15px;
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+      padding: 1.5rem;
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .product-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 8px 20px rgba(106, 13, 173, 0.25);
+    }
+
+    .product-card img {
+      width: 100%;
+      border-radius: 12px;
+      height: 180px;
+      object-fit: cover;
+      margin-bottom: 1rem;
+    }
+
+    .product-card h4 {
+      font-size: 1.2rem;
+      color: #4b0082;
+      margin-bottom: 0.5rem;
+    }
+
+    .product-card p {
+      font-size: 0.95rem;
+      color: #555;
+      margin-bottom: 1rem;
+    }
+
+    .product-card button {
+      background: linear-gradient(90deg, #6a0dad, #9b59b6);
       color: white;
-      padding: 1rem 0;
-    }
-    main {
-      padding: 2rem;
-    }
-    button {
-      background-color: #0078d7;
       border: none;
-      color: white;
-      padding: 10px 20px;
-      border-radius: 5px;
+      padding: 0.6rem 1.5rem;
+      border-radius: 20px;
       cursor: pointer;
-      font-size: 1rem;
+      transition: background 0.3s ease;
     }
-    button:hover {
-      background-color: #005fa3;
+
+    .product-card button:hover {
+      background: linear-gradient(90deg, #9b59b6, #6a0dad);
     }
+
+    /* Footer */
     footer {
-      margin-top: 2rem;
-      background-color: #eee;
-      padding: 1rem 0;
-      font-size: 0.9rem;
+      background-color: #6a0dad;
+      color: white;
+      text-align: center;
+      padding: 1.2rem;
+      margin-top: 3rem;
+      font-size: 0.95rem;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      nav ul {
+        display: none;
+      }
+
+      .hero h2 {
+        font-size: 2rem;
+      }
+
+      .hero p {
+        font-size: 1rem;
+      }
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Welcome to My Page</h1>
-  </header>
+  <nav>
+    <h1>PurpleMart</h1>
+    <ul>
+      <li>Home</li>
+      <li>Shop</li>
+      <li>Deals</li>
+      <li>Contact</li>
+      <li>Cart 🛒</li>
+    </ul>
+  </nav>
 
-  <main>
-    <p>This is a simple HTML page created for demonstration purposes.</p>
-    <button onclick="alert('Hello, world!')">Click Me</button>
-  </main>
+  <section class="hero">
+    <h2>Shop Smart, Live Stylish 💜</h2>
+    <p>Discover the latest fashion, gadgets, and accessories—all in one place!</p>
+    <button>Start Shopping</button>
+  </section>
+
+  <section class="products">
+    <h3>Trending Products</h3>
+    <div class="product-grid">
+      <div class="product-card">
+        <img src="https://images.unsplash.com/photo-1585386959984-a41552231693" alt="Dress">
+        <h4>Elegant Purple Dress</h4>
+        <p>Perfect for parties and special occasions.</p>
+        <button>Add to Cart</button>
+      </div>
+
+      <div class="product-card">
+        <img src="https://images.unsplash.com/photo-1512436991641-6745cdb1723f" alt="Watch">
+        <h4>Luxury Smartwatch</h4>
+        <p>Stay stylish and track your fitness in one go.</p>
+        <button>Add to Cart</button>
+      </div>
+
+      <div class="product-card">
+        <img src="https://images.unsplash.com/photo-1585386959984-a41552231693" alt="Headphones">
+        <h4>Wireless Headphones</h4>
+        <p>Experience rich sound with sleek design.</p>
+        <button>Add to Cart</button>
+      </div>
+
+      <div class="product-card">
+        <img src="https://images.unsplash.com/photo-1505740420928-5e560c06d30e" alt="Bag">
+        <h4>Chic Leather Bag</h4>
+        <p>Carry your world in elegant style.</p>
+        <button>Add to Cart</button>
+      </div>
+    </div>
+  </section>
 
   <footer>
-    <p>© 2025 My Website</p>
+    © 2025 PurpleMart | Designed with 💜 for Shoppers
   </footer>
-
-  <!-- Embed Product Chatbot Widget -->
   <script
-    src="http://localhost:8000/static/widget.js"
-    data-api-base="http://localhost:8000"
-    data-username="jhilmilj28@gmail.com"
-    data-password="Jhilmil@28"
-    >
-  </script>
+  src="http://localhost:8000/static/widget.js"
+  data-api-base="http://localhost:8000"
+  data-username="jhilmilj28@gmail.com"
+  data-password="Jhilmil@28"
+  >
+</script>
 </body>
 </html>
