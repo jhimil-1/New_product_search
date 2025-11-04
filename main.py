@@ -526,6 +526,71 @@ async def public_query(
 
         results = search_results.get("results", [])
 
+        # Strict post-filtering based on category and key terms to avoid irrelevant results
+        query_text = (data.query or "").lower()
+        stop_words = {"the","a","an","and","or","for","to","of","me","only","show","find","search","similar","product","products"}
+        words = [w for w in query_text.split() if w and w not in stop_words]
+        word_set = set(words)
+
+        # Enforce explicit category if provided
+        if data.category:
+            wanted_cat = data.category.lower()
+            results = [r for r in results if str(r.get("category","")) .lower() == wanted_cat]
+
+        apparel_terms = {"dress","dresses","gown","maxi","shirt","shirts","jeans","tshirt","t-shirt","top","skirt"}
+        color_terms = {"black","white","red","blue","green","gold","silver","pink","purple","yellow","brown","beige","grey","gray"}
+
+        def contains_any(text: str, terms: set) -> bool:
+            return any(t in text for t in terms)
+
+        if word_set:
+            filtered_tmp = []
+            for r in results:
+                name_l = str(r.get("name","")) .lower()
+                desc_l = str(r.get("description","")) .lower()
+                cat_l = str(r.get("category","")) .lower()
+
+                # Apparel specificity controls
+                dress_terms = {"dress","dresses","gown","maxi"}
+                shirt_terms = {"shirt","shirts","tshirt","t-shirt"}
+                mentioned_dress = any(t in word_set for t in dress_terms)
+                mentioned_shirt = any(t in word_set for t in shirt_terms)
+
+                # If apparel terms mentioned at all, require apparel presence
+                if any(t in word_set for t in apparel_terms):
+                    if not (contains_any(name_l, apparel_terms) or contains_any(desc_l, apparel_terms)):
+                        continue
+
+                # If query asks for dresses and not shirts, exclude shirts and require dress-like match
+                if mentioned_dress and not mentioned_shirt:
+                    if not (contains_any(name_l, dress_terms) or contains_any(desc_l, dress_terms)):
+                        continue
+                    if contains_any(name_l, shirt_terms) or contains_any(desc_l, shirt_terms):
+                        continue
+
+                # If query asks for shirts and not dresses, exclude dresses and require shirt-like match
+                if mentioned_shirt and not mentioned_dress:
+                    if not (contains_any(name_l, shirt_terms) or contains_any(desc_l, shirt_terms)):
+                        continue
+                    # optionally exclude dresses
+                    if contains_any(name_l, dress_terms) or contains_any(desc_l, dress_terms):
+                        continue
+
+                # If color mentioned, require presence in name/desc
+                needed_colors = {c for c in color_terms if c in word_set}
+                if needed_colors and not (contains_any(name_l, needed_colors) or contains_any(desc_l, needed_colors)):
+                    continue
+
+                # If query doesn't mention electronics and no explicit category, exclude electronics
+                mentions_electronics = any(k in word_set for k in {"phone","iphone","galaxy","electronics","mobile","smartphone"})
+                if not data.category and not mentions_electronics and cat_l == "electronics":
+                    continue
+
+                filtered_tmp.append(r)
+
+            if filtered_tmp:
+                results = filtered_tmp
+
         # Sort by similarity and cap to limit
         results = sorted(
             results,
