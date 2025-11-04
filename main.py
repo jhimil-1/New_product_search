@@ -530,9 +530,21 @@ async def public_query(
                 status="success"
             )
 
+        # Price-only question without a specific product
+        if "price" in query_text and len(tokens) <= 3 and not data.category:
+            return ChatResponse(
+                session_id=data.session_id or str(uuid.uuid4()),
+                query=data.query or "",
+                response="Which product's price would you like to know? For example: price of 'Bodycon Dress'.",
+                products=[],
+                timestamp=datetime.utcnow().isoformat(),
+                status="success"
+            )
+
         # Infer category from query if not explicitly provided (simple heuristics)
         inferred_category = None
         qt = query_text
+        gift_flag = False
         if data.category:
             inferred_category = data.category
         else:
@@ -546,6 +558,12 @@ async def public_query(
             elif any(k in qt for k in ["phone", "iphone", "galaxy", "smartphone", "laptop", "electronics"]):
                 inferred_category = "Electronics"
 
+        # Gift/occasion intents – bias to Jewellery if none provided
+        if any(k in qt for k in ["gift", "anniversary", "girlfriend", "wife", "fiance", "bride", "valentine"]):
+            gift_flag = True
+            if not inferred_category:
+                inferred_category = "Jewellery"
+
         search_results = await product_handler.search_products(
             query=data.query,
             image_bytes=None,
@@ -556,6 +574,13 @@ async def public_query(
         )
 
         results = search_results.get("results", [])
+
+        # Post-filter for gift intents: prioritize jewellery items
+        if gift_flag and results:
+            preferred = {"necklace","pendant","earring","ring","bangle","bracelet","chain","choker"}
+            gift_filtered = [r for r in results if any(t in str(r.get("name","")) .lower() or t in str(r.get("description","")) .lower() for t in preferred)]
+            if gift_filtered:
+                results = gift_filtered
 
         # Strict post-filtering based on category and key terms to avoid irrelevant results
         query_text = (data.query or "").lower()
@@ -629,10 +654,31 @@ async def public_query(
             reverse=True
         )[:max(1, min(50, data.limit))]
 
+        # If the user explicitly asked for price of a product, craft a clear price reply
+        clear_price_msg = None
+        if (data.query or "") and ("price" in (data.query or "").lower()) and results:
+            ql = (data.query or "").lower()
+            # try to find a product whose name appears in the query
+            named = None
+            for r in results:
+                name_l = str(r.get("name", "")).lower()
+                if name_l and name_l in ql:
+                    named = r
+                    break
+            target = named or results[0]
+            price_val = target.get("price", "")
+            # ensure string formatting
+            try:
+                price_val = float(price_val)
+                price_str = f"₹{price_val:.2f}" if "₹" in str(target.get("price", "")) else f"{price_val:.2f}"
+            except Exception:
+                price_str = str(price_val)
+            clear_price_msg = f"Price of {target.get('name','this product')}: {price_str}"
+
         return ChatResponse(
             session_id=data.session_id or str(uuid.uuid4()),
             query=data.query or "",
-            response=f"Found {len(results)} products",
+            response=clear_price_msg or f"Found {len(results)} products",
             products=[{
                 "id": str(item.get("id", item.get("_id", ""))),
                 "name": item.get("name", ""),
