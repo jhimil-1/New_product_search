@@ -69,6 +69,15 @@ class ProductCreate(BaseModel):
     category: str
     image_url: str
 
+class IngestRequest(BaseModel):
+    products: List[ProductCreate]
+
+class PublicQuery(BaseModel):
+    query: Optional[str] = None
+    session_id: Optional[str] = None
+    category: Optional[str] = None
+    limit: int = 10
+
 
 class ChatQuery(BaseModel):
     query: str
@@ -321,6 +330,29 @@ async def upload_products(
             detail="Error processing product upload"
         )
 
+# JSON ingestion API (for programmatic ingestion)
+@app.post("/api/ingest/products", response_model=dict)
+async def ingest_products(
+    payload: IngestRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        products = [p.dict() for p in payload.products]
+        result = await product_handler.process_product_upload(
+            products=products,
+            user_id=current_user.get("user_id", current_user.get("username"))
+        )
+        return {
+            "status": "success",
+            "message": f"Ingested {len(products)} products",
+            "details": result
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ingestion error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error ingesting products")
+
 # DIAGNOSTIC TEXT SEARCH - Shows exactly what's happening
 @app.post("/chat/query", response_model=ChatResponse)
 async def chat_query(
@@ -472,6 +504,56 @@ async def chat_query(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred: {str(e)}"
         )
+
+# Lightweight query API (for widget)
+@app.post("/api/query", response_model=ChatResponse)
+async def public_query(
+    data: PublicQuery,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        if (not data.query or not data.query.strip()) and not data.category:
+            raise HTTPException(status_code=400, detail="Query or category is required")
+
+        search_results = await product_handler.search_products(
+            query=data.query,
+            image_bytes=None,
+            category=data.category,
+            limit=max(1, min(50, data.limit)),
+            min_score=0.2,
+            user_id=current_user.get("user_id", current_user.get("username"))
+        )
+
+        results = search_results.get("results", [])
+
+        # Sort by similarity and cap to limit
+        results = sorted(
+            results,
+            key=lambda x: x.get("similarity_score", 0),
+            reverse=True
+        )[:max(1, min(50, data.limit))]
+
+        return ChatResponse(
+            session_id=data.session_id or str(uuid.uuid4()),
+            query=data.query or "",
+            response=f"Found {len(results)} products",
+            products=[{
+                "id": str(item.get("id", item.get("_id", ""))),
+                "name": item.get("name", ""),
+                "description": item.get("description", ""),
+                "price": str(item.get("price", "")),
+                "category": item.get("category", ""),
+                "image_url": item.get("image_url", ""),
+                "similarity_score": float(item.get("similarity_score", 0.0))
+            } for item in results],
+            timestamp=datetime.utcnow().isoformat(),
+            status="success"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Public query error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error processing query")
 
 # IMAGE SEARCH (keep simple for now)
 @app.post("/chat/image-query", response_model=ChatResponse)
