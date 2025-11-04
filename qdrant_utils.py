@@ -394,7 +394,7 @@ class QdrantManager:
             logger.info(f"Searching with params: limit={limit}, min_score={min_score}, filters={query_filter}")
             
             try:
-                # First try with filters
+                # Always honor user isolation when user_id is provided.
                 search_results = self.client.search(
                     collection_name=self.collection_name,
                     query_vector=query_embedding,
@@ -404,90 +404,43 @@ class QdrantManager:
                     with_payload=True,
                     with_vectors=False
                 )
-                
-                # If no results with filters and user_id is provided, try with only user_id filter
-                if not search_results and query_filter is not None:
-                    if user_id and category_filter:
-                        # Try with only user_id filter but maintain category filter with lower threshold
-                        logger.info("No results with strict threshold, trying with lower threshold but keeping category filter")
+
+                # If no results and a user_id is provided, relax only the score threshold but keep the user filter.
+                if user_id and not search_results:
+                    logger.info("No results; retrying with relaxed threshold while keeping user filter")
+                    relaxed_must_conditions = [
+                        models.FieldCondition(
+                            key="created_by",
+                            match=models.MatchValue(value=user_id)
+                        )
+                    ]
+                    # Keep category/jewelry constraints if they existed originally
+                    if category_filter:
                         category_values = [category_filter, category_filter.lower(), category_filter.capitalize(), category_filter.upper()]
-                        combined_filter = models.Filter(
-                            must=[
-                                models.FieldCondition(
-                                    key="created_by",
-                                    match=models.MatchValue(value=user_id)
-                                ),
-                                models.FieldCondition(
-                                    key="category",
-                                    match=models.MatchAny(any=category_values)
-                                )
-                            ]
+                        relaxed_must_conditions.append(
+                            models.FieldCondition(
+                                key="category",
+                                match=models.MatchAny(any=category_values)
+                            )
                         )
-                        search_results = self.client.search(
-                            collection_name=self.collection_name,
-                            query_vector=query_embedding,
-                            query_filter=combined_filter,
-                            limit=limit,
-                            score_threshold=min_score * 0.7,  # Lower threshold but keep category filter
-                            with_payload=True,
-                            with_vectors=False
+                    if jewelry_type:
+                        jewelry_values = [jewelry_type, jewelry_type.lower(), jewelry_type.capitalize(), jewelry_type.upper()]
+                        relaxed_must_conditions.append(
+                            models.FieldCondition(
+                                key="jewelry_type",
+                                match=models.MatchAny(any=jewelry_values)
+                            )
                         )
-                    
-                    # If still no results, try with only category filter (no user filter)
-                    if not search_results and category_filter:
-                        logger.info("No results with user and category filter, trying with only category filter")
-                        # Try with more variations of category names to handle potential mismatches
-                        category_values = [
-                            category_filter, 
-                            category_filter.lower(), 
-                            category_filter.capitalize(), 
-                            category_filter.upper(),
-                            # Add common category variations
-                            "clothing" if category_filter.lower() == "clothes" else ("clothes" if category_filter.lower() == "clothing" else ""),
-                            "jewellery" if category_filter.lower() == "jewelry" else ("jewelry" if category_filter.lower() == "jewellery" else ""),
-                            "electronic" if category_filter.lower() == "electronics" else ("electronics" if category_filter.lower() == "electronic" else "")
-                        ]
-                        # Remove empty strings
-                        category_values = [v for v in category_values if v]
-                        
-                        category_only_filter = models.Filter(
-                            must=[
-                                models.FieldCondition(
-                                    key="category",
-                                    match=models.MatchAny(any=category_values)
-                                )
-                            ]
-                        )
-                        search_results = self.client.search(
-                            collection_name=self.collection_name,
-                            query_vector=query_embedding,
-                            query_filter=category_only_filter,
-                            limit=limit,
-                            score_threshold=min_score * 0.5,  # Lower threshold further to find more results
-                            with_payload=True,
-                            with_vectors=False
-                        )
-                        
-                    # Only if all category-based searches fail, try with just user filter
-                    if not search_results and user_id:
-                        logger.info("No results with category filter, trying with only user_id filter")
-                        user_filter = models.Filter(
-                            must=[
-                                models.FieldCondition(
-                                    key="created_by",
-                                    match=models.MatchValue(value=user_id)
-                                )
-                            ]
-                        )
-                        search_results = self.client.search(
-                            collection_name=self.collection_name,
-                            query_vector=query_embedding,
-                            query_filter=user_filter,
-                            limit=limit,
-                            score_threshold=min_score * 0.8,
-                            with_payload=True,
-                            with_vectors=False
-                        )
+                    relaxed_filter = models.Filter(must=relaxed_must_conditions)
+                    search_results = self.client.search(
+                        collection_name=self.collection_name,
+                        query_vector=query_embedding,
+                        query_filter=relaxed_filter,
+                        limit=limit,
+                        score_threshold=min_score * 0.5,
+                        with_payload=True,
+                        with_vectors=False
+                    )
             except Exception as e:
                 logger.error(f"Error during search: {str(e)}")
                 # Return empty results instead of falling back to unfiltered search

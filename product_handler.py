@@ -947,7 +947,8 @@ class ProductHandler:
         query_image: str = None,
         category: str = None,
         limit: int = 10,
-        min_score: float = 0.1  # Lowered from 0.3 to get more results
+        min_score: float = 0.1,  # Lowered from 0.3 to get more results
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
         Search for jewelry using CLIP-based similarity on both image and category.
@@ -1005,25 +1006,30 @@ class ProductHandler:
             else:
                 raise ValueError("Either query_text or query_image must be provided")
             
-            # Search in Qdrant with category filter
+            # Search in Qdrant with category filter and strict user scoping when provided
             logger.info(f"Searching with embedding size: {len(search_embedding)}")
-            search_results = qdrant_manager.search_similar(
+            search_results = qdrant_manager.search_similar_products(
                 query_embedding=search_embedding,
-                limit=limit,
+                user_id=user_id,
                 category_filter=category,
+                limit=limit,
                 min_score=min_score
             )
             logger.info(f"Raw search results count: {len(search_results)}")
             
             # Log top 3 results for debugging
             for i, result in enumerate(search_results[:3]):
-                logger.info(f"Result {i+1} - ID: {result.get('id')}, Score: {result.get('score', 0):.4f}, Category: {result.get('category', 'N/A')}")
+                # Support both dict results from search_similar_products and prior format
+                rid = result.get('id') or result.get('product_id')
+                rscore = result.get('score', 0)
+                rcat = result.get('category', 'N/A')
+                logger.info(f"Result {i+1} - ID: {rid}, Score: {rscore:.4f}, Category: {rcat}")
             
             # Get product details from MongoDB
             # Use a dictionary to store unique products by their ID
             unique_product_ids = {}
             for hit in search_results:
-                product_id = hit["id"]
+                product_id = hit.get("product_id") or hit.get("id")
                 # Keep the highest score for each product
                 if product_id not in unique_product_ids or hit.get("score", 0) > unique_product_ids[product_id].get("score", 0):
                     unique_product_ids[product_id] = {"id": product_id, "score": hit.get("score", 0)}
