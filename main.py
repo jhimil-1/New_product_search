@@ -515,10 +515,41 @@ async def public_query(
         if (not data.query or not data.query.strip()) and not data.category:
             raise HTTPException(status_code=400, detail="Query or category is required")
 
+        # Handle greetings without returning products
+        query_text = (data.query or "").strip().lower()
+        greeting_terms = {"hi", "hii", "hello", "hey", "hai", "yo", "sup", "greetings"}
+        # Simple tokenization
+        tokens = [t for t in query_text.replace(",", " ").replace(".", " ").split() if t]
+        if tokens and all(t in greeting_terms for t in tokens):
+            return ChatResponse(
+                session_id=data.session_id or str(uuid.uuid4()),
+                query=data.query or "",
+                response="Hello! How can I help you find products today?",
+                products=[],
+                timestamp=datetime.utcnow().isoformat(),
+                status="success"
+            )
+
+        # Infer category from query if not explicitly provided (simple heuristics)
+        inferred_category = None
+        qt = query_text
+        if data.category:
+            inferred_category = data.category
+        else:
+            # Jewellery intents (handle typos like 'hjwellery')
+            if any(k in qt for k in ["jewel", "jewell", "jewelry", "jewellery", "necklace", "ring", "earring", "pendant", "bangle"]):
+                inferred_category = "Jewellery"
+            # Clothes intents
+            elif any(k in qt for k in ["cloth", "apparel", "dress", "gown", "shirt", "jeans", "tshirt", "t-shirt", "skirt", "top"]):
+                inferred_category = "Clothes"
+            # Electronics intents
+            elif any(k in qt for k in ["phone", "iphone", "galaxy", "smartphone", "laptop", "electronics"]):
+                inferred_category = "Electronics"
+
         search_results = await product_handler.search_products(
             query=data.query,
             image_bytes=None,
-            category=data.category,
+            category=inferred_category,
             limit=max(1, min(50, data.limit)),
             min_score=0.2,
             user_id=current_user.get("user_id", current_user.get("username"))
@@ -532,9 +563,9 @@ async def public_query(
         words = [w for w in query_text.split() if w and w not in stop_words]
         word_set = set(words)
 
-        # Enforce explicit category if provided
-        if data.category:
-            wanted_cat = data.category.lower()
+        # Enforce explicit or inferred category if available
+        if inferred_category:
+            wanted_cat = inferred_category.lower()
             results = [r for r in results if str(r.get("category","")) .lower() == wanted_cat]
 
         apparel_terms = {"dress","dresses","gown","maxi","shirt","shirts","jeans","tshirt","t-shirt","top","skirt"}
