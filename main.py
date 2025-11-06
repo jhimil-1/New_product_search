@@ -49,6 +49,11 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+
+
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -564,16 +569,54 @@ async def public_query(
             if not inferred_category:
                 inferred_category = "Jewellery"
 
+        user_id = current_user.get("user_id", current_user.get("username"))
+        logger.info(f"Text query for user_id: {user_id}")
+        
         search_results = await product_handler.search_products(
             query=data.query,
             image_bytes=None,
             category=inferred_category,
             limit=max(1, min(50, data.limit)),
             min_score=0.2,
-            user_id=current_user.get("user_id", current_user.get("username"))
+            user_id=user_id
         )
 
         results = search_results.get("results", [])
+        
+        # STRICT: Filter to only show products from the current user's database
+        # Double-check user ownership by checking MongoDB
+        if results:
+            from bson import ObjectId
+            db = MongoDB.get_db()
+            products_collection = db["products"]
+            filtered_results = []
+            for r in results:
+                product_id = r.get("id") or r.get("_id")
+                if product_id:
+                    try:
+                        # Try to convert to ObjectId if it's a string
+                        if isinstance(product_id, str):
+                            try:
+                                product_oid = ObjectId(product_id)
+                            except:
+                                product_oid = product_id
+                        else:
+                            product_oid = product_id
+                        
+                        # Check if product belongs to current user
+                        product_doc = products_collection.find_one({"_id": product_oid})
+                        if product_doc:
+                            product_user_id = product_doc.get("created_by") or product_doc.get("user_id")
+                            if str(product_user_id) == str(user_id):
+                                filtered_results.append(r)
+                            else:
+                                logger.warning(f"Product {product_id} belongs to user {product_user_id}, not {user_id}")
+                    except Exception as e:
+                        logger.error(f"Error checking product ownership: {e}")
+                        # If we can't verify, exclude it for safety
+                        continue
+            results = filtered_results
+            logger.info(f"After user filtering: {len(results)} products for user {user_id}")
 
         # Post-filter for gift intents: prioritize jewellery items
         if gift_flag and results:
@@ -719,16 +762,54 @@ async def image_search(
         
         image_bytes = await image.read()
         
+        user_id = current_user.get("user_id", current_user.get("username"))
+        logger.info(f"Image search for user_id: {user_id}")
+        
         search_results = await product_handler.search_products(
             query=query,
             image_bytes=image_bytes,
             category=category,
             limit=15,
             min_score=0.2,
-            user_id=current_user.get("user_id", current_user.get("username"))
+            user_id=user_id
         )
         
         results = search_results.get("results", [])
+        
+        # STRICT: Filter to only show products from the current user's database
+        # Double-check user ownership by checking MongoDB
+        if results:
+            from bson import ObjectId
+            db = MongoDB.get_db()
+            products_collection = db["products"]
+            filtered_results = []
+            for r in results:
+                product_id = r.get("id") or r.get("_id")
+                if product_id:
+                    try:
+                        # Try to convert to ObjectId if it's a string
+                        if isinstance(product_id, str):
+                            try:
+                                product_oid = ObjectId(product_id)
+                            except:
+                                product_oid = product_id
+                        else:
+                            product_oid = product_id
+                        
+                        # Check if product belongs to current user
+                        product_doc = products_collection.find_one({"_id": product_oid})
+                        if product_doc:
+                            product_user_id = product_doc.get("created_by") or product_doc.get("user_id")
+                            if str(product_user_id) == str(user_id):
+                                filtered_results.append(r)
+                            else:
+                                logger.warning(f"Product {product_id} belongs to user {product_user_id}, not {user_id}")
+                    except Exception as e:
+                        logger.error(f"Error checking product ownership: {e}")
+                        # If we can't verify, exclude it for safety
+                        continue
+            results = filtered_results
+            logger.info(f"After user filtering: {len(results)} products for user {user_id}")
         
         response = ChatResponse(
             session_id=session_id,
